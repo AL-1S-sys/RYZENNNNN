@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0B3B24">
+  <meta name="format-detection" content="telephone=no">
   <title>3D Interactive Info Map - PHINMA AU South Campus</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,35 +23,61 @@
       --ink-soft: #55605A;
       --brass: #B08434;
       --line: #D9D2C0;
+      /* Kept in sync with JS on resize/orientation change so Android/iOS
+         browser chrome (address bar, nav bar) never clips content. */
+      --app-height: 100%;
+    }
+
+    * {
+      box-sizing: border-box;
+      /* Kill the iOS long-press "callout" menu and Android's tap highlight
+         flash, which otherwise pop up over 3D room hit-boxes. */
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     html, body {
       width: 100%;
       height: 100%;
+      height: var(--app-height);
       margin: 0;
       padding: 0;
       overflow: hidden;
+      position: fixed;
+      inset: 0;
       font-family: 'Inter', sans-serif;
       background: #1a1a1a;
       color: var(--ink);
       -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      /* Stops iOS Safari's rubber-band/bounce scroll and Android's
+         overscroll glow from fighting with the OrbitControls drag. */
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     canvas {
       width: 100% !important;
       height: 100% !important;
       display: block;
+      touch-action: none;
     }
 
     /* Top-left plaque: location + current floor on one line */
     #ui-container {
-      position: absolute; top: 20px; left: 20px; z-index: 10;
+      position: absolute;
+      top: calc(20px + env(safe-area-inset-top, 0px));
+      left: calc(20px + env(safe-area-inset-left, 0px));
+      z-index: 10;
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 4px;
       padding: 14px 18px;
       box-shadow: 0 1px 2px rgba(11, 59, 36, 0.08);
       width: 260px;
+      max-width: calc(100vw - 40px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
       pointer-events: none;
     }
     .map-title {
@@ -85,11 +116,13 @@
 
     /* Instruction overlay */
     #instructions-overlay {
-      position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(8, 20, 13, 0.55); z-index: 50; display: flex;
       justify-content: center; align-items: center; backdrop-filter: blur(3px);
       transition: opacity 0.4s ease, visibility 0.4s ease;
       pointer-events: auto;
+      touch-action: none;
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     }
     #instructions-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
 
@@ -99,6 +132,9 @@
       width: 85%; max-width: 380px; padding: 28px 26px;
       border-radius: 6px;
       pointer-events: auto;
+      max-height: 85%;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .instruction-card h2 {
       font-family: 'Fraunces', serif;
@@ -149,57 +185,127 @@
       width: 100%;
       transition: background 0.2s;
       pointer-events: auto;
+      touch-action: manipulation;
     }
     .start-btn:hover { background: var(--canopy-dark); }
     .start-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+    .start-btn:active { background: var(--canopy-dark); }
 
-    /* Sliding room info panel */
+    /* Sliding room info panel — a compact bottom sheet rather than a
+       full-height drawer, so it never covers the whole screen and the
+       map stays visible around it. */
     #info-panel {
-      position: absolute; top: 0; right: -100%; width: 100%; max-width: 340px; height: 100%;
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -100%;
+      top: auto;
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
+      max-height: min(60vh, 480px);
       background: var(--paper);
-      border-left: 1px solid var(--line);
-      z-index: 20; padding: clamp(18px, 4vw, 28px); box-sizing: border-box;
-      transition: right 0.3s ease;
-      display: flex; flex-direction: column; justify-content: space-between;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      border-radius: 18px 18px 0 0;
+      z-index: 20;
+      padding: 14px 22px 20px;
+      padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+      padding-left: calc(22px + env(safe-area-inset-left, 0px));
+      padding-right: calc(22px + env(safe-area-inset-right, 0px));
+      box-sizing: border-box;
+      box-shadow: 0 -8px 28px rgba(11, 59, 36, 0.18);
+      transition: bottom 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+      overflow-y: auto;
+      -webkit-user-select: text;
+      user-select: text;
     }
-    #info-panel.active { right: 0; }
+    #info-panel.active { bottom: 0; }
 
-    .panel-header { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+    .panel-drag-handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--line);
+      margin: 0 auto 14px;
+      flex-shrink: 0;
+    }
+
+    .panel-header {
+      position: relative;
+      padding-bottom: 12px;
+      padding-right: 34px; /* keep the title clear of the close button */
+      border-bottom: 1px solid var(--line);
+    }
     .panel-title {
       font-family: 'Fraunces', serif;
       font-weight: 600;
       color: var(--ink);
       margin: 0;
-      font-size: 1.4rem;
-      line-height: 1.25;
+      font-size: 1.15rem;
+      line-height: 1.3;
+    }
+
+    .panel-close-btn {
+      position: absolute;
+      top: -4px;
+      right: -6px;
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 1.1rem;
+      line-height: 1;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s;
+    }
+    .panel-close-btn:hover,
+    .panel-close-btn:active {
+      background: var(--line);
+      color: var(--ink);
+    }
+    .panel-close-btn:focus-visible {
+      outline: 2px solid var(--brass);
+      outline-offset: 2px;
     }
 
     .room-tag {
       display: block;
       color: var(--brass);
-      font-size: 0.78rem;
-      margin-top: 8px;
+      font-size: 0.72rem;
+      margin-top: 6px;
       letter-spacing: 0.01em;
     }
     .room-desc {
       color: var(--ink-soft);
-      line-height: 1.6;
-      font-size: 0.95rem;
-      margin-top: 18px;
+      line-height: 1.5;
+      font-size: 0.82rem;
+      margin-top: 14px;
     }
 
     .room-meta {
-      margin-top: 24px;
+      margin-top: 18px;
       border-top: 1px solid var(--line);
-      padding-top: 14px;
-      font-size: 0.88rem;
+      padding-top: 12px;
+      font-size: 0.78rem;
       color: var(--ink);
     }
     .room-meta-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      padding: 6px 0;
+      padding: 5px 0;
     }
     .room-meta-row + .room-meta-row { border-top: 1px solid var(--line); }
     .room-meta-label { color: var(--ink-soft); }
@@ -248,10 +354,12 @@
     </div>
   </div>
 
-  <!-- Minimal Room Details Side Panel -->
+  <!-- Minimal Room Details Bottom Sheet -->
   <div id="info-panel">
+    <div class="panel-drag-handle"></div>
     <div>
       <div class="panel-header">
+        <button id="close-panel" class="panel-close-btn" aria-label="Close room details">✕</button>
         <h2 id="room-name" class="panel-title">Room Name</h2>
         <span id="room-layer-tag" class="room-tag">Layer 1</span>
       </div>
