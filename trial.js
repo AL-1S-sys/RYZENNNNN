@@ -2,6 +2,55 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 /* ------------------------------------------------------------------
+   MOBILE COMPATIBILITY (Android + iOS)
+   ------------------------------------------------------------------
+   Mobile browsers resize the viewport as address bars/nav bars show
+   and hide, and iOS Safari intercepts two-finger pinches as a page
+   zoom gesture before Three.js ever sees them. These handlers fix
+   both, plus a couple of small touch-quality issues.
+------------------------------------------------------------------- */
+
+// Keep a CSS custom property in sync with the *real* visible height,
+// instead of relying on 100vh/100%, which lags behind on iOS Safari
+// and Android Chrome whenever their address bar shows/hides.
+function syncAppHeight() {
+  const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${h}px`);
+}
+syncAppHeight();
+window.addEventListener('resize', syncAppHeight);
+window.addEventListener('orientationchange', () => {
+  // iOS reports the old innerHeight for a moment after rotation.
+  setTimeout(syncAppHeight, 50);
+  setTimeout(syncAppHeight, 300);
+});
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncAppHeight);
+}
+
+// Stop iOS Safari's native pinch-to-zoom / double-tap-to-zoom gestures
+// so they don't fight with OrbitControls' own pinch-to-dolly handling.
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
+document.addEventListener('gestureend', (e) => e.preventDefault());
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - lastTouchEnd <= 350) e.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+
+// Belt-and-braces: block multi-touch page gestures anywhere outside the
+// scrollable info panel (touch-action: none in CSS already covers most
+// of this, but some Android WebViews need the JS fallback too).
+document.addEventListener('touchmove', (e) => {
+  if (e.touches.length > 1 && !e.target.closest('#info-panel')) {
+    e.preventDefault();
+  }
+}, { passive: false });
+
+/* ------------------------------------------------------------------
    BUILDING FOOTPRINT (U-shape with triangular bevels)
 ------------------------------------------------------------------- */
 const B = {
@@ -152,10 +201,41 @@ currentSpot.z = spotRoom ? spotRoom.z : 0;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8eef5);
 
-const width = window.innerWidth || 300;
-const height = window.innerHeight || 300;
+// Use the visualViewport size when available (more reliable than
+// window.innerWidth/Height on mobile, especially mid-gesture on iOS).
+function getViewportSize() {
+  if (window.visualViewport) {
+    return { w: window.visualViewport.width, h: window.visualViewport.height };
+  }
+  return { w: window.innerWidth || 300, h: window.innerHeight || 300 };
+}
 
-const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
+const { w: initW, h: initH } = getViewportSize();
+
+/* ------------------------------------------------------------------
+   RESPONSIVE FIELD OF VIEW
+   ------------------------------------------------------------------
+   A fixed vertical FOV was tuned for a wide desktop window. On a tall
+   phone screen the *horizontal* FOV at that same vertical FOV shrinks
+   a lot, so the building fills more of the frame and everything reads
+   as "zoomed in". This keeps the horizontal field of view roughly
+   constant across aspect ratios by widening the vertical FOV on
+   narrower (portrait) screens, so the same scene fits comfortably
+   whatever the device or orientation.
+------------------------------------------------------------------- */
+const BASE_FOV_DEG = 45;
+const BASE_ASPECT = 16 / 9; // the wide-desktop aspect the scene was framed for
+const BASE_V_FOV_RAD = THREE.MathUtils.degToRad(BASE_FOV_DEG);
+const BASE_H_FOV_RAD = 2 * Math.atan(Math.tan(BASE_V_FOV_RAD / 2) * BASE_ASPECT);
+const MAX_V_FOV_DEG = 85; // clamp so extremely narrow screens don't fisheye
+
+function getResponsiveFovDeg(aspect) {
+  if (aspect >= BASE_ASPECT) return BASE_FOV_DEG;
+  const vFovRad = 2 * Math.atan(Math.tan(BASE_H_FOV_RAD / 2) / aspect);
+  return Math.min(THREE.MathUtils.radToDeg(vFovRad), MAX_V_FOV_DEG);
+}
+
+const camera = new THREE.PerspectiveCamera(getResponsiveFovDeg(initW / initH), initW / initH, 1, 1000);
 
 const wideCamPos = new THREE.Vector3(18, 19, 26);
 const wideTarget = new THREE.Vector3(0, 6, 0.5);
@@ -163,8 +243,11 @@ const wideTarget = new THREE.Vector3(0, 6, 0.5);
 camera.position.copy(wideCamPos);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-renderer.setSize(width, height);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(initW, initH);
+// Cap pixel ratio at 2 to keep frame rate reasonable on high-DPI Android
+// and iPhone screens (Retina/3x panels would otherwise triple the pixel
+// count for very little visible benefit).
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -180,6 +263,25 @@ controls.maxDistance = 70;
 controls.minPolarAngle = 0;
 controls.maxPolarAngle = Math.PI / 2 + 0.1;
 controls.target.copy(wideTarget);
+
+// Explicit touch gesture mapping: one finger orbits, two fingers
+// pinch-to-dolly + pan. Spelling this out avoids relying on Three.js
+// defaults, which is what actually needs to match the "pinch to zoom"
+// instruction shown in the onboarding card.
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN
+};
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN
+};
+controls.rotateSpeed = 0.7;
+controls.panSpeed = 0.7;
+// Slightly gentler zoom step so pinch-to-zoom doesn't feel twitchy on
+// small phone screens.
+controls.zoomSpeed = 0.8;
 
 const targetCamPos = new THREE.Vector3().copy(wideCamPos);
 const targetLookAt = new THREE.Vector3().copy(wideTarget);
@@ -454,12 +556,15 @@ window.addEventListener('pointerup', (event) => {
   if (!pointerStart) return;
   const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
   pointerStart = null;
-  if (moved > 8) return;
+  // A slightly larger drag threshold than a mouse would need, since a
+  // finger naturally wobbles a few extra pixels during a tap on touchscreens.
+  if (moved > 12) return;
 
   if (!overlay || event.target.closest('#info-panel') || event.target.closest('#ui-container') || !overlay.classList.contains('hidden')) return;
 
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
 
   const visibleTargets = [...selectableRooms, ...selectableSlabs].filter(m => m.parent.visible);
@@ -480,6 +585,14 @@ window.addEventListener('pointerup', (event) => {
     infoPanel.classList.remove('active');
   }
 });
+
+const closePanelBtn = document.getElementById('close-panel');
+if (closePanelBtn) {
+  closePanelBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (infoPanel) infoPanel.classList.remove('active');
+  });
+}
 
 function showRoomDetails(room) {
   const rn = document.getElementById('room-name');
@@ -544,13 +657,33 @@ function animate() {
 }
 animate();
 
-window.addEventListener('resize', () => {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+// Debounced resize handler: mobile browsers fire resize repeatedly while
+// the address bar animates in/out, so this avoids doing a full relayout
+// every single frame of that animation.
+let resizeTimeout = null;
+function handleResize() {
+  const { w, h } = getViewportSize();
+  const aspect = w / h;
 
-  camera.aspect = w / h;
+  camera.fov = getResponsiveFovDeg(aspect);
+  camera.aspect = aspect;
   camera.updateProjectionMatrix();
 
   renderer.setSize(w, h);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+}
+window.addEventListener('resize', () => {
+  if (resizeTimeout) clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(handleResize, 100);
 });
+window.addEventListener('orientationchange', () => {
+  // Give the browser chrome time to settle before reading the new size.
+  setTimeout(handleResize, 100);
+  setTimeout(handleResize, 400);
+});
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    if (resizeTimeout) clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(handleResize, 100);
+  });
+}
