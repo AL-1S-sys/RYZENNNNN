@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>3D Interactive Info Map - PHINMA AU South Campus</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --canopy: #0B3B24;
+      --canopy-dark: #082A19;
+      --paper: #FAF8F3;
+      --ink: #1C2620;
+      --ink-soft: #55605A;
+      --brass: #B08434;
+      --line: #D9D2C0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      background: #1a1a1a;
+      color: var(--ink);
+      -webkit-text-size-adjust: 100%;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+
+    /* Top-left plaque: location + current floor on one line */
+    #ui-container {
+      position: absolute; top: 20px; left: 20px; z-index: 10;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 14px 18px;
+      box-shadow: 0 1px 2px rgba(11, 59, 36, 0.08);
+      width: 260px;
+      pointer-events: none;
+    }
+    .map-title {
+      margin: 0 0 10px;
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      font-size: 1.05rem;
+      color: var(--canopy);
+      letter-spacing: 0.01em;
+    }
+    .plaque-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--ink-soft);
+      line-height: 1.4;
+    }
+    .plaque-line strong {
+      color: var(--ink);
+      font-weight: 500;
+    }
+    .plaque-divider {
+      width: 1px;
+      align-self: stretch;
+      background: var(--line);
+      flex-shrink: 0;
+    }
+    .plaque-field { flex: 1; min-width: 0; }
+    .plaque-label {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--brass);
+      margin-bottom: 2px;
+    }
+
+    /* Instruction overlay */
+    #instructions-overlay {
+      position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(8, 20, 13, 0.55); z-index: 50; display: flex;
+      justify-content: center; align-items: center; backdrop-filter: blur(3px);
+      transition: opacity 0.4s ease, visibility 0.4s ease;
+      pointer-events: auto;
+    }
+    #instructions-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+    .instruction-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      width: 85%; max-width: 380px; padding: 28px 26px;
+      border-radius: 6px;
+      pointer-events: auto;
+    }
+    .instruction-card h2 {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      color: var(--canopy);
+      margin: 0 0 6px;
+      font-size: 1.35rem;
+    }
+    .instruction-card > p {
+      color: var(--ink-soft);
+      font-size: 0.9rem;
+      margin: 0 0 18px;
+    }
+    .instruction-card ul {
+      list-style: none;
+      margin: 0 0 4px;
+      padding: 0;
+      border-top: 1px solid var(--line);
+    }
+    .instruction-card li {
+      position: relative;
+      padding: 10px 0 10px 16px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .instruction-card li::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 15px;
+      width: 6px; height: 2px;
+      background: var(--brass);
+    }
+    .instruction-card strong { color: var(--canopy); font-weight: 600; }
+
+    .start-btn {
+      background: var(--canopy);
+      color: var(--paper);
+      border: none;
+      padding: 13px 24px;
+      border-radius: 4px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      font-size: 0.95rem;
+      cursor: pointer;
+      margin-top: 18px;
+      width: 100%;
+      transition: background 0.2s;
+      pointer-events: auto;
+    }
+    .start-btn:hover { background: var(--canopy-dark); }
+    .start-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+    /* Sliding room info panel */
+    #info-panel {
+      position: absolute; top: 0; right: -100%; width: 100%; max-width: 340px; height: 100%;
+      background: var(--paper);
+      border-left: 1px solid var(--line);
+      z-index: 20; padding: clamp(18px, 4vw, 28px); box-sizing: border-box;
+      transition: right 0.3s ease;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    #info-panel.active { right: 0; }
+
+    .panel-header { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+    .panel-title {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 0;
+      font-size: 1.4rem;
+      line-height: 1.25;
+    }
+
+    .room-tag {
+      display: block;
+      color: var(--brass);
+      font-size: 0.78rem;
+      margin-top: 8px;
+      letter-spacing: 0.01em;
+    }
+    .room-desc {
+      color: var(--ink-soft);
+      line-height: 1.6;
+      font-size: 0.95rem;
+      margin-top: 18px;
+    }
+
+    .room-meta {
+      margin-top: 24px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      font-size: 0.88rem;
+      color: var(--ink);
+    }
+    .room-meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 6px 0;
+    }
+    .room-meta-row + .room-meta-row { border-top: 1px solid var(--line); }
+    .room-meta-label { color: var(--ink-soft); }
+    #room-status { color: var(--canopy); font-weight: 600; }
+  </style>
+
+  <!-- Import Three.js via ES Modules -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <!-- Instructions Overlay Modal with Button -->
+  <div id="instructions-overlay">
+    <div class="instruction-card">
+      <h2>Welcome to PHINMA AU South</h2>
+      <p>A quick guide to finding your way around campus.</p>
+      <ul>
+        <li><strong>Tap any floor</strong> to isolate that level.</li>
+        <li><strong>Tap a room</strong> to see details and hours.</li>
+        <li><strong>Tap the floor slab</strong> to return to all floors.</li>
+        <li><strong>Pinch with two fingers to zoom in and out</strong></li>
+      </ul>
+      <button id="close-instructions" class="start-btn">Explore campus</button>
+    </div>
+  </div>
+
+  <div id="ui-container">
+    <h3 class="map-title">PHINMA AU South Map</h3>
+    <div class="plaque-line">
+      <div class="plaque-field">
+        <span class="plaque-label">Location</span>
+        <strong id="location-display">Scanned Spot</strong>
+      </div>
+      <div class="plaque-divider"></div>
+      <div class="plaque-field">
+        <span class="plaque-label">Viewing</span>
+        <strong id="layer-display">All Floors</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- Minimal Room Details Side Panel -->
+  <div id="info-panel">
+    <div>
+      <div class="panel-header">
+        <h2 id="room-name" class="panel-title">Room Name</h2>
+        <span id="room-layer-tag" class="room-tag">Layer 1</span>
+      </div>
+      <p id="room-desc" class="room-desc">Select a room to view details.</p>
+      <div class="room-meta">
+        <div class="room-meta-row">
+          <span class="room-meta-label">Hours</span>
+          <span id="room-hours">7:00 AM - 6:00 PM</span>
+        </div>
+        <div class="room-meta-row">
+          <span class="room-meta-label">Status</span>
+          <span id="room-status">Open</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./trial.js"></script>
+</body>
+</html>
