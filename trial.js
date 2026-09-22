@@ -609,15 +609,22 @@ if (closeBtn) {
     event.stopPropagation();
     if (overlay) overlay.classList.add('hidden');
 
-    activeIsolatedLayer = 'all';
-    Object.keys(floorMeshes).forEach(key => { floorMeshes[key].visible = true; });
+    // If this session came from a scanned QR code (cp param resolved to an
+    // actual room), fly straight into that room's floor instead of sitting
+    // on the all-floors overview - this is the "scan -> auto zoom" moment.
+    if (spotRoom) {
+      isolateAndZoomToRoom(spotRoom);
+    } else {
+      activeIsolatedLayer = 'all';
+      Object.keys(floorMeshes).forEach(key => { floorMeshes[key].visible = true; });
 
-    if (userPin) userPin.visible = true;
-    if (layerDisplay) layerDisplay.innerHTML = '🏢 Viewing: All Floors';
+      if (userPin) userPin.visible = true;
+      if (layerDisplay) layerDisplay.innerHTML = '🏢 Viewing: All Floors';
 
-    targetCamPos.copy(wideCamPos);
-    targetLookAt.copy(wideTarget);
-    isTransitioning = true;
+      targetCamPos.copy(wideCamPos);
+      targetLookAt.copy(wideTarget);
+      isTransitioning = true;
+    }
   });
 }
 
@@ -714,6 +721,35 @@ function isolateAndZoomFloor(selectedLayer, floorY) {
     targetCamPos.set(0, floorY + 14, 20);
   }
   isTransitioning = true;
+}
+
+// Zooms straight into the specific room a scanned QR checkpoint points to:
+// isolates that room's floor layer (like isolateAndZoomFloor), but frames
+// the camera tight on the room's own x/z instead of the whole floor centre,
+// highlights the pin, and pops the info panel open automatically.
+function isolateAndZoomToRoom(poi) {
+  const floorY = (poi.layer - 1) * spacing;
+
+  activeIsolatedLayer = poi.layer;
+  if (infoPanel) infoPanel.classList.remove('active');
+
+  if (layerDisplay) {
+    layerDisplay.innerHTML = `🏢 Viewing: Floor Layer ${poi.layer}`;
+  }
+
+  Object.keys(floorMeshes).forEach(key => {
+    const layerNum = parseInt(key);
+    floorMeshes[layerNum].visible = (layerNum === poi.layer);
+  });
+
+  if (userPin) userPin.visible = (poi.layer === currentSpot.layer);
+
+  // Close, angled framing on just this room rather than the whole floor.
+  targetLookAt.set(poi.x, floorY + 0.5, poi.z);
+  targetCamPos.set(poi.x + 6, floorY + 7, poi.z + 8);
+  isTransitioning = true;
+
+  showRoomDetails(poi);
 }
 
 function animate() {
