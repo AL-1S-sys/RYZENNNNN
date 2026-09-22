@@ -615,17 +615,57 @@ if (closeBtn) {
     if (spotRoom) {
       isolateAndZoomToRoom(spotRoom);
     } else {
-      activeIsolatedLayer = 'all';
-      Object.keys(floorMeshes).forEach(key => { floorMeshes[key].visible = true; });
-
-      if (userPin) userPin.visible = true;
-      if (layerDisplay) layerDisplay.innerHTML = '🏢 Viewing: All Floors';
-
-      targetCamPos.copy(wideCamPos);
-      targetLookAt.copy(wideTarget);
-      isTransitioning = true;
+      isolateAndZoomFloor('all', 0);
     }
   });
+}
+
+/* ------------------------------------------------------------------
+   "X" EXIT-ZOOM BUTTON
+   ------------------------------------------------------------------
+   Built in JS (not the HTML) so it works regardless of markup. Shown
+   any time the camera is isolated on a single layer/room - including
+   the automatic zoom that happens right after a QR scan - and tapping
+   it flies back out to the all-floors overview.
+------------------------------------------------------------------- */
+let exitZoomBtn = null;
+function ensureExitZoomBtn() {
+  if (exitZoomBtn) return exitZoomBtn;
+
+  const btn = document.createElement('button');
+  btn.id = 'exit-zoom-btn';
+  btn.setAttribute('aria-label', 'Exit zoomed view');
+  btn.innerText = '\u00D7'; // ×
+  Object.assign(btn.style, {
+    position: 'fixed',
+    top: 'calc(16px + env(safe-area-inset-top, 0px))',
+    right: 'calc(16px + env(safe-area-inset-right, 0px))',
+    width: '44px',
+    height: '44px',
+    borderRadius: '50%',
+    border: 'none',
+    background: 'rgba(20, 20, 20, 0.65)',
+    color: '#ffffff',
+    fontSize: '26px',
+    lineHeight: '44px',
+    textAlign: 'center',
+    padding: '0',
+    cursor: 'pointer',
+    zIndex: '9999',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+    display: 'none',
+    touchAction: 'manipulation'
+  });
+  btn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    isolateAndZoomFloor('all', 0);
+  });
+  document.body.appendChild(btn);
+  exitZoomBtn = btn;
+  return btn;
+}
+function setExitZoomBtnVisible(visible) {
+  ensureExitZoomBtn().style.display = visible ? 'block' : 'none';
 }
 
 // Tap vs drag detection
@@ -643,7 +683,7 @@ window.addEventListener('pointerup', (event) => {
   // finger naturally wobbles a few extra pixels during a tap on touchscreens.
   if (moved > 12) return;
 
-  if (!overlay || event.target.closest('#info-panel') || event.target.closest('#ui-container') || !overlay.classList.contains('hidden')) return;
+  if (!overlay || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || !overlay.classList.contains('hidden')) return;
 
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -712,6 +752,7 @@ function isolateAndZoomFloor(selectedLayer, floorY) {
   });
 
   if (userPin) userPin.visible = (selectedLayer === 'all' || selectedLayer === currentSpot.layer);
+  setExitZoomBtnVisible(selectedLayer !== 'all');
 
   if (selectedLayer === 'all') {
     targetCamPos.copy(wideCamPos);
@@ -743,6 +784,7 @@ function isolateAndZoomToRoom(poi) {
   });
 
   if (userPin) userPin.visible = (poi.layer === currentSpot.layer);
+  setExitZoomBtnVisible(true);
 
   // Close, angled framing on just this room rather than the whole floor.
   targetLookAt.set(poi.x, floorY + 0.5, poi.z);
