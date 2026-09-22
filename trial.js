@@ -75,6 +75,9 @@ const BACK_SLOT_Z = -6.2;
 const CORNER_Z = -5.29;              // inset from the diagonal wall by half its depth
 const CORNER_W = 2.2, CORNER_D = 2.0; // corner rooms, angled to match the bevel
 const BACK_W = 1.6, BACK_D = 2.0;     // flat rooms along the straight back wall
+const BIG_W = 3.3;                    // wider corridor rooms (Layer 4), smaller than a full wing room (WING_W)
+const MED_W = 2.6;                    // shrunk version of BIG_W, used when an extra room needs to fit alongside
+const SMALL_W = 1.25;                 // shrunk rooms used when an extra room needs to fit in the same touching row
 
 const BACK_SLOTS = [
   { x: -8.79, z: CORNER_Z,     rot:  Math.PI / 4, w: CORNER_W, d: CORNER_D }, // left bevel nook
@@ -94,82 +97,122 @@ const WING_W = 5.0, WING_D = 4.0;   // w runs along the wing, d across it
 
 // QR Code Checkpoint Registry
 const checkpoints = {
-  'L1_ENTRANCE': { name: 'Layer 1 Main Lobby',      layer: 1, targetId: 'l1_lobby' },
-  'CAFETERIA':   { name: 'Ground Floor Cafeteria',  layer: 1, targetId: 'l1_cafeteria_annex' },
-  'LIBRARY':     { name: 'Library Lower Floor',     layer: 2, targetId: 'l2_library' },
-  'STUDENT_L3':  { name: 'Student Lounge (Floor 3)', layer: 3, targetId: 'l3_wing_right_a' }
+  'L1_ENTRANCE':      { name: 'Main Lobby & Security',      layer: 1, targetId: 'l1_lobby' },
+  'CAFETERIA':        { name: 'Cafeteria/Student lounge',   layer: 1, targetId: 'l1_cafeteria_annex' },
+  'LIBRARY_LOWER':    { name: 'Library Lower Floor',        layer: 2, targetId: 'l2_library' },
+  'LIBRARY_UPPER':    { name: 'Library Upper Floor',        layer: 3, targetId: 'l3_libupper' },
+  'STUDENT_LOUNGE_1': { name: 'Student Lounge 1',           layer: 3, targetId: 'l3_electronics' },
+  'STUDENT_LOUNGE_2': { name: 'Student Lounge 2',           layer: 4, targetId: 'l4_printroom' }
 };
 
-// Floor plans: 4 wing rooms (in WING_SLOTS order) + 6 back-corridor rooms
+// Floor plans: 4 wing rooms (in WING_SLOTS order) + corridor rooms.
+// Corridor rooms normally pull their x/z/w/d/rot from BACK_SLOTS by index,
+// but any room may override x/z/w/d/rot directly (used on Layer 4 below
+// to make the last two corridor rooms as big as the wing rooms). Wing
+// rooms follow the same pattern against WING_SLOTS (used on Layer 3 below
+// to split the right wing into 3 narrower rooms instead of the usual 2).
 const floorPlans = {
   1: {
     wings: [
       { id: 'l1_wing_left_a',  name: 'Faculty Room A', desc: 'Faculty desks and consultation space near the lobby.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
       { id: 'l1_wing_left_b',  name: 'Faculty Room B', desc: 'Additional faculty desks opening onto the courtyard.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_wing_right_a', name: 'Campus Bookstore', desc: 'Textbooks, uniforms, and school supplies.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
-      { id: 'l1_wing_right_b', name: 'Campus Annex', desc: 'Overflow retail and parcel pickup.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
+      { id: 'l1_wing_right_a', name: 'CAS', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
+      { id: 'l1_wing_right_b', name: 'CAS', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
     ],
     corridor: [
       { id: 'l1_lobby',       name: 'Main Lobby & Security', desc: 'Main entrance, guard post, and visitor logbook.', hours: '6:00 AM - 9:00 PM', status: 'Open' },
-      { id: 'l1_admin',       name: 'Administrative Office', desc: 'Registrar, cashier, and records.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_clinic',      name: 'University Health Clinic', desc: 'First aid, consultations, and medical certificates.', hours: '7:30 AM - 6:00 PM', status: 'Open' },
-      { id: 'l1_chapel',      name: 'Campus Chapel', desc: 'Quiet space for prayer and scheduled services.', hours: '6:00 AM - 8:00 PM', status: 'Open' },
-      { id: 'l1_canteen2',    name: 'Annex Food Kiosks', desc: 'Small food stalls and drink counters.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l1_maintenance', name: 'Facilities & Maintenance', desc: 'Building services and lost and found.', hours: '7:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_guidance',    name: 'Guidance Office', desc: 'Counseling and student support services.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_cafeteria_annex', name: 'Cafeteria - Annex Seating', desc: 'Extra seating and vending machines near the lobby.', hours: '7:00 AM - 5:00 PM', status: 'Open' }
+      { id: 'l1_admin_clinic_chapel', name: 'Business center, Teacher lounge', desc: 'none', hours: '6:00 AM - 8:00 PM', status: 'Open',
+        // Centred at -5.35 + BIG_W/2 = -3.7, matching Layer 2's Lecture Hall
+        // 103 + 104 combined footprint (-7.0 .. -0.4) directly below it.
+        // windows: [1, 1.2, 1.2] gives Admin the baseline window size, and
+        // both Clinic's window and the Chapel/Kiosks window slightly larger.
+        x: -5.35 + BIG_W / 2, z: BACK_SLOT_Z, w: BIG_W * 2, d: BACK_D, windows: [1, 1.2, 1.2] },
+      { id: 'l1_cafeteria_annex', name: 'Cafeteria/Student lounge', desc: 'none', hours: '7:00 AM - 5:00 PM', status: 'Open',
+        x: 8.79, z: CORNER_Z, rot: -Math.PI / 4, w: CORNER_W, d: CORNER_D }
     ]
   },
   2: {
     wings: [
-      { id: 'l2_wing_left_a',  name: 'Lecture Hall 101', desc: 'Tiered seating for 80.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
-      { id: 'l2_wing_left_b',  name: 'Lecture Hall 102', desc: 'Tiered seating for 80.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
-      { id: 'l2_wing_right_a', name: 'Lecture Hall 201', desc: 'Flat-floor room with movable tables.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
-      { id: 'l2_wing_right_b', name: 'Lecture Hall 202', desc: 'Flat-floor room with movable tables.', hours: '7:00 AM - 7:00 PM', status: 'Open' }
+      { id: 'l2_wing_left_a',  name: 'ROOM 202', desc: 'Tiered seating for 80.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
+      { id: 'l2_wing_left_b',  name: 'ROOM 201', desc: 'Tiered seating for 80.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
+      { id: 'l2_wing_right_a', name: 'ROOM 206', desc: 'Flat-floor room with movable tables.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
+      { id: 'l2_wing_right_b', name: 'ROOM 207', desc: 'Flat-floor room with movable tables.', hours: '7:00 AM - 7:00 PM', status: 'Open' }
     ],
     corridor: [
       { id: 'l2_library',      name: 'Library Lower Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l2_room103',      name: 'Lecture Hall 103', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
-      { id: 'l2_room104',      name: 'Lecture Hall 104', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open' },
-      { id: 'l2_facultypool',  name: 'Faculty Center A', desc: 'Faculty desks and consultation corners.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l2_discussion1',  name: 'Discussion Pod 1', desc: 'Small group room, whiteboard included.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l2_restroom_f',   name: 'Restroom (Women)', desc: 'Located at the end of the corridor.', hours: 'Always Open', status: 'Open' },
-      { id: 'l2_room105',      name: 'Lecture Hall 105', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open' }
+      { id: 'l2_room103',      name: 'ROOM 204', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open',
+        x: -5.35, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
+      { id: 'l2_room104',      name: 'ROOM 205', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open',
+        x: -5.35 + BIG_W, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
+      { id: 'l2_restroom_f',   name: 'Restroom (Women/Men)', desc: 'Located along the corridor.', hours: 'Always Open', status: 'Open',
+        x:  0.6, z: BACK_SLOT_Z, w: BACK_W, d: BACK_D }
     ]
   },
   3: {
     wings: [
-      { id: 'l3_wing_left_a',  name: 'Computer Lab A', desc: '40 workstations for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l3_wing_left_b',  name: 'Networking Hub', desc: 'Racks, patch panels, and hands-on networking benches.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l3_wing_right_a', name: 'Student Lounge South', desc: 'Seating and charging stations overlooking the courtyard.', hours: '24/7 Access', status: 'Open' },
-      { id: 'l3_wing_right_b', name: 'Student Lounge North', desc: 'Quieter lounge with study booths.', hours: '24/7 Access', status: 'Open' }
+      { id: 'l3_wing_left_a',  name: 'ROOM 302', desc: '40 workstations for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
+      { id: 'l3_wing_left_b',  name: 'ROOM 301', desc: 'Racks, patch panels, and hands-on networking benches.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
+      // Right wing is split into 3 rooms instead of the usual 2 - each is
+      // narrower (w) than WING_W so all three fit in the same wing length,
+      // with x/z/w/d given explicitly instead of pulling from WING_SLOTS.
+      { id: 'l3_wing_right_a', name: 'ROOM 307', desc: 'Seating and charging stations overlooking the courtyard.', hours: '24/7 Access', status: 'Open',
+        x: 8.6, z: -1.85, w: 3.3, d: WING_D },
+      { id: 'l3_wing_right_b', name: 'ROOM 308', desc: 'Bookable pods for small-group work sessions.', hours: '24/7 Access', status: 'Open',
+        x: 8.6, z:  1.6,  w: 3.3, d: WING_D },
+      { id: 'l3_wing_right_c', name: 'ROOM 309', desc: 'Quieter lounge with study booths.', hours: '24/7 Access', status: 'Open',
+        x: 8.6, z:  5.05, w: 3.3, d: WING_D }
     ],
     corridor: [
-      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Private carrels and periodicals.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l3_comlab2',     name: 'Computer Laboratory 2', desc: 'General-use lab and printing station.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l3_multimedia',  name: 'Multimedia Editing Room', desc: 'Video and audio editing suites.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l3_facultyb',    name: 'IT Department Faculty Room', desc: 'IT faculty offices.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l3_discussion2', name: 'Collaborative Pod 2', desc: 'Group work room with a shared display.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l3_restroom_f',  name: 'Restroom (Women)', desc: 'Located at the end of the corridor.', hours: 'Always Open', status: 'Open' },
-      { id: 'l3_comlab3',     name: 'Computer Laboratory 3', desc: 'Overflow lab for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open' }
+      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
+      { id: 'l3_comlab2',     name: 'ROOM 304', desc: 'General-use lab, printing station, and video/audio editing suites.', hours: '8:00 AM - 6:00 PM', status: 'Open',
+        x: -5.35, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
+      { id: 'l3_facultyb',    name: 'ROOM 305', desc: 'IT faculty offices with an adjoining group work room.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: -5.35 + BIG_W, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
+      { id: 'l3_restroom_f',  name: 'Restroom (Women/Men)', desc: 'Located at the end of the corridor.', hours: 'Always Open', status: 'Open',
+        x: 0.6, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D },
+      { id: 'l3_comlab3',     name: 'ROOM 306', desc: 'Overflow lab for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open',
+        // Moved to sit immediately next to the restroom (0.6), using the same
+        // 1.86 centre-to-centre spacing as the other back-corridor slots.
+        x: 0.6 + 1.86, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D },
+      { id: 'l3_electronics', name: 'Student lounge1', desc: 'Benches and equipment for hardware and circuits work.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: 0.6 + 1.86 * 2, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D }
     ]
   },
   4: {
     wings: [
-      { id: 'l4_wing_left_a',  name: 'Mini-Auditorium', desc: 'Raked seating for talks and defenses.', hours: 'By Reservation', status: 'Open' },
-      { id: 'l4_wing_left_b',  name: 'Green Room & Stage Prep', desc: 'Backstage holding area for performers.', hours: 'By Reservation', status: 'Open' },
-      { id: 'l4_wing_right_a', name: 'Executive Conference Room', desc: 'Large meeting table and video conferencing.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l4_wing_right_b', name: 'Boardroom Annex', desc: 'Breakout room beside the conference room.', hours: '8:00 AM - 5:00 PM', status: 'Open' }
+      { id: 'l4_wing_left_a',  name: 'ROOM 402', desc: 'Raked seating for talks and defenses.', hours: 'By Reservation', status: 'Open' },
+      { id: 'l4_wing_left_b',  name: 'ROOM 401', desc: 'Backstage holding area for performers.', hours: 'By Reservation', status: 'Open' },
+      { id: 'l4_wing_right_a', name: 'ROOM 408', desc: 'Large meeting table and video conferencing.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
+      { id: 'l4_wing_right_b', name: 'ROOM 409', desc: 'Breakout room beside the conference room.', hours: '8:00 AM - 5:00 PM', status: 'Open' }
     ],
+    // Room 1 (the lounge) sits in the same corner-nook slot as Layer 3's
+    // library, so the two line up vertically.
+    //
+    // The Creative Arts Studio and Student Council Headquarters have been
+    // merged into a single room, sized (2 x BIG_W = 6.6 units) and
+    // positioned so it lines up directly above Layer 2's Lecture Hall
+    // 103 + 104 footprint (x: -5.35 .. -5.35 + 2*BIG_W, centre -3.7).
+    // The remaining rooms (restroom, storage, alumni office, print center)
+    // are shifted right and narrowed slightly (using SMALL_W) so they still
+    // fit in the space left before the right-hand bevel.
     corridor: [
-      { id: 'l4_lounge',        name: 'Top Floor Recreational Lounge', desc: 'Games, seating, and campus views.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l4_studiosub',     name: 'Creative Arts Studio', desc: 'Open studio for art and design work.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l4_meeting',       name: 'Student Council Headquarters', desc: 'Council office and meeting space.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      { id: 'l4_storage',       name: 'Event Equipment Storage', desc: 'Sound, lighting, and staging equipment.', hours: 'Restricted', status: 'Staff Only' },
-      { id: 'l4_rooftopgarden', name: 'Rooftop Green Deck', desc: 'Planted deck open to the sky.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
-      { id: 'l4_restroom_f',    name: 'Restroom (Women)', desc: 'Located at the end of the corridor.', hours: 'Always Open', status: 'Open' },
-      { id: 'l4_altroom',       name: 'Alumni Relations Office', desc: 'Alumni affairs and events planning.', hours: '8:00 AM - 5:00 PM', status: 'Open' }
+      { id: 'l4_lounge',    name: 'ROOM 403', desc: 'Games, seating, and campus views.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: -8.79, z: CORNER_Z, rot: Math.PI / 4, w: CORNER_W, d: CORNER_D },
+      { id: 'l4_studio_council', name: 'ROOM 404/ROOM 405', desc: 'Joint space combining the open art/design studio with the student council office and meeting area.', hours: '8:00 AM - 6:00 PM', status: 'Open',
+        // Centred at -5.35 + BIG_W/2 = -3.7, matching the midpoint of Layer 2's
+        // Lecture Hall 103 (-5.35) + 104 (-5.35 + BIG_W) footprint exactly.
+        x: -5.35 + BIG_W / 2, z: BACK_SLOT_Z, w: BIG_W * 2, d: BACK_D, windows: 2 },
+      { id: 'l4_restroom_f', name: 'Restroom (Women/Men)', desc: 'Located along the top-floor corridor.', hours: 'Always Open', status: 'Open',
+        x:  0.6, z: BACK_SLOT_Z, w: BACK_W, d: BACK_D },
+      { id: 'l4_storage_alumni', name: 'ROOM 406/ROOM 407', desc: 'COMLAB 1 and COMLAB 2.', hours: '8:00 AM - 5:00 PM (storage side restricted)', status: 'Open',
+        // Occupies the same combined footprint the two separate rooms used
+        // to share (1.6 .. 4.3), so nothing else in the row had to move.
+        x:  2.95, z: BACK_SLOT_Z, w: 2.7, d: BACK_D, windows: 2 },
+      { id: 'l4_printroom', name: 'Student Lounge2', desc: 'Games, seating, and campus views.  ', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        // Shrunk from BACK_W to SMALL_W, kept centred in the same spot.
+        x:  5.3, z: BACK_SLOT_Z, w: SMALL_W, d: BACK_D }
     ]
+
   }
 };
 
@@ -181,11 +224,37 @@ Object.keys(floorPlans).forEach(key => {
   const plan = floorPlans[layer];
 
   plan.wings.forEach((room, i) => {
-    poiData3D.push({ ...room, layer, x: WING_SLOTS[i].x, z: WING_SLOTS[i].z, w: WING_W, d: WING_D, color: ROOM_COLOR });
+    // Fall back to the matching WING_SLOTS entry for any field the room
+    // doesn't specify itself, so most wings can stay slot-driven while a
+    // few (e.g. Layer 3's split right wing) can override x/z/w/d directly.
+    const slot = WING_SLOTS[i] || {};
+    poiData3D.push({
+      ...room,
+      layer,
+      x: room.x !== undefined ? room.x : slot.x,
+      z: room.z !== undefined ? room.z : slot.z,
+      w: room.w !== undefined ? room.w : WING_W,
+      d: room.d !== undefined ? room.d : WING_D,
+      color: ROOM_COLOR,
+      windows: room.windows !== undefined ? room.windows : 1
+    });
   });
   plan.corridor.forEach((room, i) => {
-    const slot = BACK_SLOTS[i];
-    poiData3D.push({ ...room, layer, x: slot.x, z: slot.z, w: slot.w, d: slot.d, rot: slot.rot, color: ROOM_COLOR });
+    // Fall back to the matching BACK_SLOTS entry for any field the room
+    // doesn't specify itself, so most rooms can stay slot-driven while a
+    // few (e.g. Layer 4's rooms) can override x/z/w/d/rot.
+    const slot = BACK_SLOTS[i] || {};
+    poiData3D.push({
+      ...room,
+      layer,
+      x: room.x !== undefined ? room.x : slot.x,
+      z: room.z !== undefined ? room.z : slot.z,
+      w: room.w !== undefined ? room.w : slot.w,
+      d: room.d !== undefined ? room.d : slot.d,
+      rot: room.rot !== undefined ? room.rot : slot.rot,
+      windows: room.windows !== undefined ? room.windows : 1,
+      color: ROOM_COLOR
+    });
   });
 });
 
@@ -212,17 +281,6 @@ function getViewportSize() {
 
 const { w: initW, h: initH } = getViewportSize();
 
-/* ------------------------------------------------------------------
-   RESPONSIVE FIELD OF VIEW
-   ------------------------------------------------------------------
-   A fixed vertical FOV was tuned for a wide desktop window. On a tall
-   phone screen the *horizontal* FOV at that same vertical FOV shrinks
-   a lot, so the building fills more of the frame and everything reads
-   as "zoomed in". This keeps the horizontal field of view roughly
-   constant across aspect ratios by widening the vertical FOV on
-   narrower (portrait) screens, so the same scene fits comfortably
-   whatever the device or orientation.
-------------------------------------------------------------------- */
 const BASE_FOV_DEG = 45;
 const BASE_ASPECT = 16 / 9; // the wide-desktop aspect the scene was framed for
 const BASE_V_FOV_RAD = THREE.MathUtils.degToRad(BASE_FOV_DEG);
@@ -460,9 +518,9 @@ for (let i = 1; i <= 4; i++) {
 
   // List of room IDs you want to highlight
   const highlightedIds = [
-    'l1_cafeteria_annex',               // Cafeteria
-    'l2_library', 'l3_libupper',        // Library
-    'l3_wing_right_a', 'l3_wing_right_b', 'l4_lounge' // Student Lounges
+    'l1_cafeteria_annex',               // Cafeteria/Student lounge
+    'l2_library', 'l3_libupper',        // Library Lower Floor, Library Upper Floor
+    'l3_electronics', 'l4_printroom'    // Student Lounge 1, Student Lounge 2
   ];
 
   // Rooms loop for current floor
@@ -496,13 +554,31 @@ for (let i = 1; i <= 4; i++) {
     roomMesh.receiveShadow = true;
     roomGroup.add(roomMesh);
 
-    // Glazing on the courtyard-facing side
-    const glassMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(poi.w * 0.8, 0.6, 0.1),
-      new THREE.MeshStandardMaterial({ color: 0x88ccff, roughness: 0.1, transparent: true, opacity: 0.5 })
-    );
-    glassMesh.position.set(0, 0, poi.d / 2 + 0.02);
-    roomGroup.add(glassMesh);
+    // Glazing on the courtyard-facing side. `windows` can be:
+    //   - a number N: N equal-width panes with mullion gaps between them
+    //     (the wing rooms, plus most wide merged corridor rooms use this)
+    //   - an array of relative weights, e.g. [1, 1, 2]: panes sized
+    //     proportionally to those weights instead of evenly — used when a
+    //     merged room's sub-spaces aren't the same width (Admin and Clinic
+    //     each get their own window, while the wider merged Chapel/Kiosks
+    //     portion gets one single, wider window instead of being split).
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, roughness: 0.1, transparent: true, opacity: 0.5 });
+    const facadeW = poi.w * 0.8;
+    const mullionGap = 0.3;
+    const weights = Array.isArray(poi.windows) ? poi.windows : Array(poi.windows || 1).fill(1);
+    const windowCount = weights.length;
+    const totalGap = mullionGap * (windowCount - 1);
+    const weightSum = weights.reduce((a, b) => a + b, 0);
+    const unitW = (facadeW - totalGap) / weightSum;
+
+    let cursorX = -facadeW / 2;
+    weights.forEach((weight) => {
+      const paneW = unitW * weight;
+      const glassMesh = new THREE.Mesh(new THREE.BoxGeometry(paneW, 0.6, 0.1), glassMat);
+      glassMesh.position.set(cursorX + paneW / 2, 0, poi.d / 2 + 0.02);
+      roomGroup.add(glassMesh);
+      cursorX += paneW + mullionGap;
+    });
 
     roomGroup.userData = { type: 'room', layerNumber: i, data: poi, floorY: floorY };
     if (isTargetRoom || isHighlighted) roomGroup.scale.set(1.05, 1.2, 1.05);
