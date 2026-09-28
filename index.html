@@ -78,7 +78,7 @@
       box-shadow: 0 1px 2px rgba(11, 59, 36, 0.08);
       width: 260px;
       max-width: calc(100vw - 40px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-      pointer-events: none;
+      pointer-events: auto;
     }
     .map-title {
       margin: 0 0 10px;
@@ -87,6 +87,7 @@
       font-size: 1.05rem;
       color: var(--canopy);
       letter-spacing: 0.01em;
+      pointer-events: none;
     }
     .plaque-line {
       display: flex;
@@ -95,6 +96,7 @@
       font-size: 0.82rem;
       color: var(--ink-soft);
       line-height: 1.4;
+      pointer-events: none;
     }
     .plaque-line strong {
       color: var(--ink);
@@ -113,6 +115,31 @@
       color: var(--brass);
       margin-bottom: 2px;
     }
+
+    /* School Amenities dashboard toggle, sitting under the plaque line */
+    #dashboard-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: 100%;
+      margin-top: 12px;
+      padding: 9px 10px;
+      background: var(--canopy);
+      color: var(--paper);
+      border: none;
+      border-radius: 4px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      font-size: 0.8rem;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      transition: background 0.2s;
+    }
+    #dashboard-btn:hover { background: var(--canopy-dark); }
+    #dashboard-btn:active { background: var(--canopy-dark); }
+    #dashboard-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 
     /* Instruction overlay */
     #instructions-overlay {
@@ -310,6 +337,161 @@
     .room-meta-row + .room-meta-row { border-top: 1px solid var(--line); }
     .room-meta-label { color: var(--ink-soft); }
     #room-status { color: var(--canopy); font-weight: 600; }
+
+    /* School Amenities dashboard panel — a right-side sliding sheet listing
+       every flagged room (cafeteria, both library floors, both student
+       lounges), each tappable to fly straight to it. It stays open while
+       you hop between amenities; the room details sheet (z-index 20)
+       slides over it. */
+    #dashboard-panel {
+      position: absolute;
+      top: 0;
+      right: -100%;
+      bottom: 0;
+      width: 78vw;
+      max-width: 300px;
+      background: var(--paper);
+      border-left: 1px solid var(--line);
+      z-index: 15;
+      box-shadow: -8px 0 28px rgba(11, 59, 36, 0.18);
+      transition: right 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+      padding: calc(20px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) 20px;
+      box-sizing: border-box;
+      pointer-events: auto;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    #dashboard-panel.active { right: 0; }
+
+    .dash-header {
+      position: relative;
+      padding-bottom: 14px;
+      padding-right: 34px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .dash-title {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      color: var(--canopy);
+      margin: 0;
+      font-size: 1.1rem;
+      line-height: 1.3;
+    }
+    .dash-subtitle {
+      display: block;
+      color: var(--ink-soft);
+      font-size: 0.78rem;
+      margin-top: 4px;
+    }
+    .dash-close-btn {
+      position: absolute;
+      top: -4px;
+      right: -6px;
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 1.1rem;
+      line-height: 1;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dash-close-btn:hover,
+    .dash-close-btn:active {
+      background: var(--line);
+      color: var(--ink);
+    }
+    .dash-close-btn:focus-visible {
+      outline: 2px solid var(--brass);
+      outline-offset: 2px;
+    }
+
+    #dashboard-list {
+      flex: 1;
+      overflow-y: auto;
+      margin: 0 -4px 0 0;
+      padding: 4px 4px 4px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .dash-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+      text-align: left;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-top: 14px;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      pointer-events: auto;
+      touch-action: manipulation;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .dash-item:first-child { margin-top: 0; }
+    .dash-item:hover,
+    .dash-item:active {
+      border-color: var(--brass);
+      box-shadow: 0 1px 4px rgba(176, 132, 52, 0.25);
+    }
+    .dash-item:focus-visible {
+      outline: 2px solid var(--brass);
+      outline-offset: 2px;
+    }
+    /* Currently selected amenity in the list */
+    .dash-item.selected {
+      border-color: var(--brass);
+      background: #fbf6ea;
+      box-shadow: 0 1px 4px rgba(176, 132, 52, 0.25);
+    }
+    .dash-item-main {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .dash-item-name {
+      font-weight: 600;
+      color: var(--ink);
+      font-size: 0.9rem;
+    }
+    .dash-item-floor {
+      flex-shrink: 0;
+      color: var(--brass);
+      font-size: 0.72rem;
+      letter-spacing: 0.01em;
+    }
+    .dash-item-meta {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.76rem;
+    }
+    .dash-item-hours { color: var(--ink-soft); }
+    .dash-item-status { font-weight: 600; }
+
+    /* Keep the × exit button clear of the open side panel */
+    body.dash-open #exit-zoom-btn {
+      right: calc(min(300px, 78vw) + 16px + env(safe-area-inset-right, 0px)) !important;
+    }
   </style>
 
   <!-- Import Three.js via ES Modules -->
@@ -333,6 +515,7 @@
         <li><strong>Tap any floor</strong> to isolate that level.</li>
         <li><strong>Tap a room</strong> to see details and hours.</li>
         <li><strong>Tap the floor slab</strong> to return to all floors.</li>
+        <li><strong>Tap "School Amenities"</strong> Tap "School Amenities" to open a list of room locations and select your desired room or location to jump directly to it. The list stays open so you can jump between places.</li>
         <li><strong>Pinch with two fingers to zoom in and out</strong></li>
       </ul>
       <button id="close-instructions" class="start-btn">Explore campus</button>
@@ -352,6 +535,7 @@
         <strong id="layer-display">All Floors</strong>
       </div>
     </div>
+    <button id="dashboard-btn" type="button">★ School Amenities</button>
   </div>
 
   <!-- Minimal Room Details Bottom Sheet -->
@@ -375,6 +559,16 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- School Amenities: every flagged room, tap one to fly to it -->
+  <div id="dashboard-panel">
+    <div class="dash-header">
+      <button id="dashboard-close" class="dash-close-btn" aria-label="Close school amenities">✕</button>
+      <h2 class="dash-title">School Amenities</h2>
+      <span class="dash-subtitle"></span>
+    </div>
+    <div id="dashboard-list"></div>
   </div>
 
   <script type="module" src="./trial.js"></script>
