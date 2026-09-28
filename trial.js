@@ -216,7 +216,7 @@ const floorPlans = {
   }
 };
 
-// Rooms flagged for the "School Amenities" dashboard: the campus's
+// Rooms flagged for the "Student Highlights" dashboard: the campus's
 // dedicated student-relaxation spots. Kept at module scope (rather than
 // rebuilt inside the per-floor loop) so both the 3D scene and the
 // dashboard panel read from the same single list.
@@ -741,8 +741,6 @@ function showRoomDetails(room) {
 
 function isolateAndZoomFloor(selectedLayer, floorY) {
   activeIsolatedLayer = selectedLayer;
-  // Going back to the all-floors view clears the highlighted amenity.
-  if (selectedLayer === 'all') setSelectedAmenity(null);
   if (infoPanel) infoPanel.classList.remove('active');
 
   if (layerDisplay) {
@@ -800,35 +798,18 @@ function isolateAndZoomToRoom(poi) {
 }
 
 /* ------------------------------------------------------------------
-   SCHOOL AMENITIES DASHBOARD
+   HIGHLIGHTS DASHBOARD
    ------------------------------------------------------------------
-   A side panel listing every room flagged in `highlightedIds` (the
+   A simple list panel of every room flagged in `highlightedIds` (the
    student lounges, cafeteria and both library floors). Toggled from
-   the "School Amenities" button in the top plaque. Picking a room in
-   the list flies the camera straight to it, same as scanning that
-   room's QR code - and the panel STAYS OPEN, with the chosen item
-   highlighted, so you can hop between amenities.
+   the "Highlights" button in the top plaque; picking a room in the
+   list closes the panel and flies the camera straight to it, same as
+   scanning that room's QR code.
 ------------------------------------------------------------------- */
 const dashboardBtn = document.getElementById('dashboard-btn');
 const dashboardPanel = document.getElementById('dashboard-panel');
 const dashboardList = document.getElementById('dashboard-list');
 const dashboardCloseBtn = document.getElementById('dashboard-close');
-
-let selectedAmenityId = null;
-
-function setSelectedAmenity(id) {
-  selectedAmenityId = id;
-  if (!dashboardList) return;
-  dashboardList.querySelectorAll('.dash-item').forEach(el => {
-    el.classList.toggle('selected', el.dataset.roomId === id);
-  });
-}
-
-function setDashboardOpen(open) {
-  if (!dashboardPanel) return;
-  dashboardPanel.classList.toggle('active', open);
-  document.body.classList.toggle('dash-open', open);
-}
 
 function buildDashboard() {
   if (!dashboardList) return;
@@ -842,7 +823,6 @@ function buildDashboard() {
     const item = document.createElement('button');
     item.className = 'dash-item';
     item.type = 'button';
-    item.dataset.roomId = room.id;
     item.innerHTML = `
       <div class="dash-item-main">
         <span class="dash-item-name">${room.name}</span>
@@ -855,8 +835,7 @@ function buildDashboard() {
     `;
     item.addEventListener('click', (event) => {
       event.stopPropagation();
-      // Panel intentionally stays open so you can jump between amenities.
-      setSelectedAmenity(room.id);
+      if (dashboardPanel) dashboardPanel.classList.remove('active');
       isolateAndZoomToRoom(room);
     });
     dashboardList.appendChild(item);
@@ -867,13 +846,13 @@ if (dashboardBtn && dashboardPanel) {
   buildDashboard();
   dashboardBtn.addEventListener('click', (event) => {
     event.stopPropagation();
-    setDashboardOpen(!dashboardPanel.classList.contains('active'));
+    dashboardPanel.classList.toggle('active');
   });
 }
 if (dashboardCloseBtn) {
   dashboardCloseBtn.addEventListener('click', (event) => {
     event.stopPropagation();
-    setDashboardOpen(false);
+    if (dashboardPanel) dashboardPanel.classList.remove('active');
   });
 }
 
