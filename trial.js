@@ -100,6 +100,7 @@ const checkpoints = {
 // PHOTOS: any room can have an `images: [...]` list (paths relative to
 // index.html). One image shows full width in the details panel; two images
 // show side by side. Rooms without `images` show no photo section.
+// Tapping a photo opens it full screen.
 const floorPlans = {
   1: {
     wings: [
@@ -630,7 +631,8 @@ window.addEventListener('pointerup', (event) => {
   // Slightly larger drag threshold since a finger wobbles during a tap.
   if (moved > 12) return;
 
-  if (!overlay || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || event.target.closest('#dashboard-panel') || event.target.closest('#dashboard-btn') || !overlay.classList.contains('hidden')) return;
+  // Ignore taps on any UI layer (including the photo viewer) so they never hit the map underneath
+  if (!overlay || event.target.closest('#image-lightbox') || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || event.target.closest('#dashboard-panel') || event.target.closest('#dashboard-btn') || !overlay.classList.contains('hidden')) return;
 
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -660,11 +662,50 @@ const closePanelBtn = document.getElementById('close-panel');
 if (closePanelBtn) {
   closePanelBtn.addEventListener('click', (event) => {
     event.stopPropagation();
+    closeLightbox();
     if (infoPanel) infoPanel.classList.remove('active');
   });
 }
 
+/* ------------------------------------------------------------------
+   PHOTO LIGHTBOX: tap a room photo to view it full screen
+------------------------------------------------------------------- */
+const lightbox = document.getElementById('image-lightbox');
+const lightboxImg = document.getElementById('lightbox-img');
+const lightboxClose = document.getElementById('lightbox-close');
+
+function openLightbox(src, alt) {
+  if (!lightbox || !lightboxImg) return;
+  lightboxImg.src = src;
+  lightboxImg.alt = alt || '';
+  lightbox.classList.add('active');
+  lightbox.setAttribute('aria-hidden', 'false');
+}
+function closeLightbox() {
+  if (!lightbox) return;
+  lightbox.classList.remove('active');
+  lightbox.setAttribute('aria-hidden', 'true');
+}
+if (lightbox) {
+  // Tapping anywhere (backdrop, image, or ✕) closes it
+  lightbox.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeLightbox();
+  });
+}
+if (lightboxClose) {
+  lightboxClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeLightbox();
+  });
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeLightbox();
+});
+
 function showRoomDetails(room) {
+  closeLightbox();
+
   const rn = document.getElementById('room-name');
   const rlt = document.getElementById('room-layer-tag');
   const rd = document.getElementById('room-desc');
@@ -694,6 +735,10 @@ function showRoomDetails(room) {
       img.loading = 'lazy';
       img.draggable = false;
       img.addEventListener('error', () => img.remove()); // hide broken images
+      img.addEventListener('click', (e) => {              // tap to enlarge
+        e.stopPropagation();
+        openLightbox(src, room.name);
+      });
       gallery.appendChild(img);
     });
   }
