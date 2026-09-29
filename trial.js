@@ -3,16 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 /* ------------------------------------------------------------------
    MOBILE COMPATIBILITY (Android + iOS)
-   ------------------------------------------------------------------
-   Mobile browsers resize the viewport as address bars/nav bars show
-   and hide, and iOS Safari intercepts two-finger pinches as a page
-   zoom gesture before Three.js ever sees them. These handlers fix
-   both, plus a couple of small touch-quality issues.
 ------------------------------------------------------------------- */
 
-// Keep a CSS custom property in sync with the *real* visible height,
-// instead of relying on 100vh/100%, which lags behind on iOS Safari
-// and Android Chrome whenever their address bar shows/hides.
+// Keep a CSS custom property in sync with the *real* visible height.
 function syncAppHeight() {
   const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
   document.documentElement.style.setProperty('--app-height', `${h}px`);
@@ -20,7 +13,6 @@ function syncAppHeight() {
 syncAppHeight();
 window.addEventListener('resize', syncAppHeight);
 window.addEventListener('orientationchange', () => {
-  // iOS reports the old innerHeight for a moment after rotation.
   setTimeout(syncAppHeight, 50);
   setTimeout(syncAppHeight, 300);
 });
@@ -29,7 +21,6 @@ if (window.visualViewport) {
 }
 
 // Stop iOS Safari's native pinch-to-zoom / double-tap-to-zoom gestures
-// so they don't fight with OrbitControls' own pinch-to-dolly handling.
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('gesturechange', (e) => e.preventDefault());
 document.addEventListener('gestureend', (e) => e.preventDefault());
@@ -41,9 +32,7 @@ document.addEventListener('touchend', (e) => {
   lastTouchEnd = now;
 }, { passive: false });
 
-// Belt-and-braces: block multi-touch page gestures anywhere outside the
-// scrollable info panel (touch-action: none in CSS already covers most
-// of this, but some Android WebViews need the JS fallback too).
+// Block multi-touch page gestures anywhere outside the scrollable info panel
 document.addEventListener('touchmove', (e) => {
   if (e.touches.length > 1 && !e.target.closest('#info-panel')) {
     e.preventDefault();
@@ -67,17 +56,15 @@ const B = {
 const PATH_W = 1.8;
 const PATH_Y = 0.17;              // just above the slab top (0.15)
 
-// Room slot positions adjusted to avoid the 3-unit corner bevels (flat run is x -8..8)
-// and to leave clearance for the staircase.
 // Every floor plan has 8 back-corridor rooms: 6 sit flat along the back wall,
 // and 2 are angled 45° to sit flush in the triangular bevel nooks at each end.
 const BACK_SLOT_Z = -6.2;
 const CORNER_Z = -5.29;              // inset from the diagonal wall by half its depth
 const CORNER_W = 2.2, CORNER_D = 2.0; // corner rooms, angled to match the bevel
 const BACK_W = 1.6, BACK_D = 2.0;     // flat rooms along the straight back wall
-const BIG_W = 3.3;                    // wider corridor rooms (Layer 4), smaller than a full wing room (WING_W)
-const MED_W = 2.6;                    // shrunk version of BIG_W, used when an extra room needs to fit alongside
-const SMALL_W = 1.25;                 // shrunk rooms used when an extra room needs to fit in the same touching row
+const BIG_W = 3.3;                    // wider corridor rooms (Layer 4)
+const MED_W = 2.6;                    // shrunk version of BIG_W
+const SMALL_W = 1.25;                 // shrunk rooms used when an extra room needs to fit
 
 const BACK_SLOTS = [
   { x: -8.79, z: CORNER_Z,     rot:  Math.PI / 4, w: CORNER_W, d: CORNER_D }, // left bevel nook
@@ -107,10 +94,12 @@ const checkpoints = {
 
 // Floor plans: 4 wing rooms (in WING_SLOTS order) + corridor rooms.
 // Corridor rooms normally pull their x/z/w/d/rot from BACK_SLOTS by index,
-// but any room may override x/z/w/d/rot directly (used on Layer 4 below
-// to make the last two corridor rooms as big as the wing rooms). Wing
-// rooms follow the same pattern against WING_SLOTS (used on Layer 3 below
-// to split the right wing into 3 narrower rooms instead of the usual 2).
+// but any room may override x/z/w/d/rot directly. Wing rooms follow the same
+// pattern against WING_SLOTS.
+//
+// PHOTOS: any room can have an `images: [...]` list (paths relative to
+// index.html). One image shows full width in the details panel; two images
+// show side by side. Rooms without `images` show no photo section.
 const floorPlans = {
   1: {
     wings: [
@@ -120,14 +109,13 @@ const floorPlans = {
       { id: 'l1_wing_right_b', name: 'CAS', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
     ],
     corridor: [
-      { id: 'l1_lobby',       name: 'Main Lobby & Security', desc: 'Main entrance, guard post, and visitor logbook.', hours: '6:00 AM - 9:00 PM', status: 'Open' },
+      { id: 'l1_lobby',       name: 'Main Lobby & Security', desc: 'Main entrance, guard post, and visitor logbook.', hours: '6:00 AM - 9:00 PM', status: 'Open',
+        images: ['images/lobby-1.jpg', 'images/lobby-2.jpg'] },
       { id: 'l1_admin_clinic_chapel', name: 'Business center, Teacher lounge', desc: 'none', hours: '6:00 AM - 8:00 PM', status: 'Open',
-        // Centred at -5.35 + BIG_W/2 = -3.7, matching Layer 2's Lecture Hall
-        // 103 + 104 combined footprint (-7.0 .. -0.4) directly below it.
-        // windows: [1, 1.2, 1.2] gives Admin the baseline window size, and
-        // both Clinic's window and the Chapel/Kiosks window slightly larger.
+        // Centred to match Layer 2's Room 204 + 205 combined footprint below it.
         x: -5.35 + BIG_W / 2, z: BACK_SLOT_Z, w: BIG_W * 2, d: BACK_D, windows: [1, 1.2, 1.2] },
-      { id: 'l1_cafeteria_annex', name: 'Cafeteria/Student lounge', desc: 'none', hours: '7:00 AM - 5:00 PM', status: 'Open',
+      { id: 'l1_cafeteria_annex', name: 'Cafeteria/Student lounge', desc: 'none', hours: '7:00 AM - 7:00 PM', status: 'Open',
+        images: ['images/cafeteria.jpg'],
         x: 8.79, z: CORNER_Z, rot: -Math.PI / 4, w: CORNER_W, d: CORNER_D }
     ]
   },
@@ -139,7 +127,8 @@ const floorPlans = {
       { id: 'l2_wing_right_b', name: 'ROOM 207', desc: 'Flat-floor room with movable tables.', hours: '7:00 AM - 7:00 PM', status: 'Open' }
     ],
     corridor: [
-      { id: 'l2_library',      name: 'Library Lower Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
+      { id: 'l2_library',      name: 'Library Lower Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: '8:00 AM - 6:00 PM', status: 'Open',
+        images: ['images/library-lower.jpg'] },
       { id: 'l2_room103',      name: 'ROOM 204', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open',
         x: -5.35, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
       { id: 'l2_room104',      name: 'ROOM 205', desc: 'Standard classroom.', hours: '7:00 AM - 7:00 PM', status: 'Open',
@@ -152,9 +141,7 @@ const floorPlans = {
     wings: [
       { id: 'l3_wing_left_a',  name: 'ROOM 302', desc: '40 workstations for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
       { id: 'l3_wing_left_b',  name: 'ROOM 301', desc: 'Racks, patch panels, and hands-on networking benches.', hours: '8:00 AM - 6:00 PM', status: 'Open' },
-      // Right wing is split into 3 rooms instead of the usual 2 - each is
-      // narrower (w) than WING_W so all three fit in the same wing length,
-      // with x/z/w/d given explicitly instead of pulling from WING_SLOTS.
+      // Right wing is split into 3 narrower rooms with explicit x/z/w/d.
       { id: 'l3_wing_right_a', name: 'ROOM 307', desc: 'Seating and charging stations overlooking the courtyard.', hours: '24/7 Access', status: 'Open',
         x: 8.6, z: -1.85, w: 3.3, d: WING_D },
       { id: 'l3_wing_right_b', name: 'ROOM 308', desc: 'Bookable pods for small-group work sessions.', hours: '24/7 Access', status: 'Open',
@@ -163,7 +150,7 @@ const floorPlans = {
         x: 8.6, z:  5.05, w: 3.3, d: WING_D }
     ],
     corridor: [
-      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
+      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: 'N/A', status: 'Close' },
       { id: 'l3_comlab2',     name: 'ROOM 304', desc: 'General-use lab, printing station, and video/audio editing suites.', hours: '8:00 AM - 6:00 PM', status: 'Open',
         x: -5.35, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
       { id: 'l3_facultyb',    name: 'ROOM 305', desc: 'IT faculty offices with an adjoining group work room.', hours: '8:00 AM - 5:00 PM', status: 'Open',
@@ -171,10 +158,9 @@ const floorPlans = {
       { id: 'l3_restroom_f',  name: 'Restroom (Women/Men)', desc: 'Located at the end of the corridor.', hours: 'Always Open', status: 'Open',
         x: 0.6, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D },
       { id: 'l3_comlab3',     name: 'ROOM 306', desc: 'Overflow lab for programming classes.', hours: '8:00 AM - 6:00 PM', status: 'Open',
-        // Moved to sit immediately next to the restroom (0.6), using the same
-        // 1.86 centre-to-centre spacing as the other back-corridor slots.
+        // Sits immediately next to the restroom, 1.86 centre-to-centre spacing.
         x: 0.6 + 1.86, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D },
-      { id: 'l3_electronics', name: 'Student lounge1', desc: 'Benches and equipment for hardware and circuits work.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+      { id: 'l3_electronics', name: 'Student lounge1', desc: 'A student lounge is a dedicated, comfortable space on campus designed for students to relax, socialize, study, or unwind between classes.', hours: '24/7', status: 'Open',
         x: 0.6 + 1.86 * 2, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D }
     ]
   },
@@ -185,41 +171,27 @@ const floorPlans = {
       { id: 'l4_wing_right_a', name: 'ROOM 408', desc: 'Large meeting table and video conferencing.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
       { id: 'l4_wing_right_b', name: 'ROOM 409', desc: 'Breakout room beside the conference room.', hours: '8:00 AM - 5:00 PM', status: 'Open' }
     ],
-    // Room 1 (the lounge) sits in the same corner-nook slot as Layer 3's
-    // library, so the two line up vertically.
-    //
-    // The Creative Arts Studio and Student Council Headquarters have been
-    // merged into a single room, sized (2 x BIG_W = 6.6 units) and
-    // positioned so it lines up directly above Layer 2's Lecture Hall
-    // 103 + 104 footprint (x: -5.35 .. -5.35 + 2*BIG_W, centre -3.7).
-    // The remaining rooms (restroom, storage, alumni office, print center)
-    // are shifted right and narrowed slightly (using SMALL_W) so they still
-    // fit in the space left before the right-hand bevel.
+    // Room 403 sits in the same corner-nook slot as Layer 3's library.
+    // Rooms 404/405 are merged and line up above Layer 2's Room 204 + 205.
     corridor: [
       { id: 'l4_lounge',    name: 'ROOM 403', desc: 'Games, seating, and campus views.', hours: '8:00 AM - 5:00 PM', status: 'Open',
         x: -8.79, z: CORNER_Z, rot: Math.PI / 4, w: CORNER_W, d: CORNER_D },
       { id: 'l4_studio_council', name: 'ROOM 404/ROOM 405', desc: 'Joint space combining the open art/design studio with the student council office and meeting area.', hours: '8:00 AM - 6:00 PM', status: 'Open',
-        // Centred at -5.35 + BIG_W/2 = -3.7, matching the midpoint of Layer 2's
-        // Lecture Hall 103 (-5.35) + 104 (-5.35 + BIG_W) footprint exactly.
         x: -5.35 + BIG_W / 2, z: BACK_SLOT_Z, w: BIG_W * 2, d: BACK_D, windows: 2 },
       { id: 'l4_restroom_f', name: 'Restroom (Women/Men)', desc: 'Located along the top-floor corridor.', hours: 'Always Open', status: 'Open',
         x:  0.6, z: BACK_SLOT_Z, w: BACK_W, d: BACK_D },
       { id: 'l4_storage_alumni', name: 'ROOM 406/ROOM 407', desc: 'COMLAB 1 and COMLAB 2.', hours: '8:00 AM - 5:00 PM (storage side restricted)', status: 'Open',
-        // Occupies the same combined footprint the two separate rooms used
-        // to share (1.6 .. 4.3), so nothing else in the row had to move.
         x:  2.95, z: BACK_SLOT_Z, w: 2.7, d: BACK_D, windows: 2 },
-      { id: 'l4_printroom', name: 'Student Lounge2', desc: 'Games, seating, and campus views.  ', hours: '8:00 AM - 5:00 PM', status: 'Open',
-        // Shrunk from BACK_W to SMALL_W, kept centred in the same spot.
+      { id: 'l4_printroom', name: 'Student Lounge2', desc: 'Games, seating, and campus views.  ', hours: '24/7', status: 'Open',
         x:  5.3, z: BACK_SLOT_Z, w: SMALL_W, d: BACK_D }
     ]
 
   }
 };
 
-// Rooms flagged for the "Student Highlights" dashboard: the campus's
-// dedicated student-relaxation spots. Kept at module scope (rather than
-// rebuilt inside the per-floor loop) so both the 3D scene and the
-// dashboard panel read from the same single list.
+// Rooms flagged for the "School Amenities" dashboard: the campus's
+// dedicated student-relaxation spots. Kept at module scope so both the 3D
+// scene and the dashboard panel read from the same single list.
 const highlightedIds = [
   'l1_cafeteria_annex',               // Cafeteria/Student lounge
   'l2_library', 'l3_libupper',        // Library Lower Floor, Library Upper Floor
@@ -234,9 +206,6 @@ Object.keys(floorPlans).forEach(key => {
   const plan = floorPlans[layer];
 
   plan.wings.forEach((room, i) => {
-    // Fall back to the matching WING_SLOTS entry for any field the room
-    // doesn't specify itself, so most wings can stay slot-driven while a
-    // few (e.g. Layer 3's split right wing) can override x/z/w/d directly.
     const slot = WING_SLOTS[i] || {};
     poiData3D.push({
       ...room,
@@ -250,9 +219,6 @@ Object.keys(floorPlans).forEach(key => {
     });
   });
   plan.corridor.forEach((room, i) => {
-    // Fall back to the matching BACK_SLOTS entry for any field the room
-    // doesn't specify itself, so most rooms can stay slot-driven while a
-    // few (e.g. Layer 4's rooms) can override x/z/w/d/rot.
     const slot = BACK_SLOTS[i] || {};
     poiData3D.push({
       ...room,
@@ -280,8 +246,7 @@ currentSpot.z = spotRoom ? spotRoom.z : 0;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8eef5);
 
-// Use the visualViewport size when available (more reliable than
-// window.innerWidth/Height on mobile, especially mid-gesture on iOS).
+// Use the visualViewport size when available (more reliable on mobile).
 function getViewportSize() {
   if (window.visualViewport) {
     return { w: window.visualViewport.width, h: window.visualViewport.height };
@@ -312,9 +277,7 @@ camera.position.copy(wideCamPos);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.setSize(initW, initH);
-// Cap pixel ratio at 2 to keep frame rate reasonable on high-DPI Android
-// and iPhone screens (Retina/3x panels would otherwise triple the pixel
-// count for very little visible benefit).
+// Cap pixel ratio at 2 to keep frame rate reasonable on high-DPI screens.
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -332,10 +295,7 @@ controls.minPolarAngle = 0;
 controls.maxPolarAngle = Math.PI / 2 + 0.1;
 controls.target.copy(wideTarget);
 
-// Explicit touch gesture mapping: one finger orbits, two fingers
-// pinch-to-dolly + pan. Spelling this out avoids relying on Three.js
-// defaults, which is what actually needs to match the "pinch to zoom"
-// instruction shown in the onboarding card.
+// One finger orbits, two fingers pinch-to-dolly + pan.
 controls.touches = {
   ONE: THREE.TOUCH.ROTATE,
   TWO: THREE.TOUCH.DOLLY_PAN
@@ -347,8 +307,6 @@ controls.mouseButtons = {
 };
 controls.rotateSpeed = 0.7;
 controls.panSpeed = 0.7;
-// Slightly gentler zoom step so pinch-to-zoom doesn't feel twitchy on
-// small phone screens.
 controls.zoomSpeed = 0.8;
 
 const targetCamPos = new THREE.Vector3().copy(wideCamPos);
@@ -401,12 +359,12 @@ scene.add(walkway);
 /* U-shaped slab geometry with triangular bevels on both back corners. */
 function makeUShape(m = 0) {
   const s = new THREE.Shape();
-  
-  s.moveTo(B.outerLeft  - m,     B.backOuter - m + 3.0); 
-  s.lineTo(B.outerLeft  - m + 3.0, B.backOuter - m); 
 
-  s.lineTo(B.outerRight + m - 3.0, B.backOuter - m); 
-  s.lineTo(B.outerRight + m,     B.backOuter - m + 3.0); 
+  s.moveTo(B.outerLeft  - m,     B.backOuter - m + 3.0);
+  s.lineTo(B.outerLeft  - m + 3.0, B.backOuter - m);
+
+  s.lineTo(B.outerRight + m - 3.0, B.backOuter - m);
+  s.lineTo(B.outerRight + m,     B.backOuter - m + 3.0);
 
   s.lineTo(B.outerRight + m, B.frontEdge + m);
   s.lineTo(B.wingInnerR - m, B.frontEdge + m);
@@ -477,8 +435,8 @@ function makeStaircase(stepCount, stepDepth, riseStep = 0.38) {
   return stairGroup;
 }
 
-// The notch between the two left-wing rooms (Faculty Room A / B slots), used to
-// place a second staircase there on every floor.
+// The notch between the two left-wing rooms, used to place a second
+// staircase there on every floor.
 const LEFT_WING_GAP_START = WING_SLOTS[0].z + WING_D / 2;
 const LEFT_WING_GAP_Z = LEFT_WING_GAP_START + 0.15;
 
@@ -517,9 +475,7 @@ for (let i = 1; i <= 4; i++) {
     floorGroup.add(backStair);
   }
 
-  // Second staircase, tucked in the notch between Faculty Room A and Faculty
-  // Room B (the left-wing rooms), sitting right in the walking path, present
-  // on every layer.
+  // Second staircase, in the notch between Faculty Room A and B
   if (i < 4) {
     const wingStair = makeStaircase(5, 0.6);
     wingStair.position.set(-wingPathX, 1, LEFT_WING_GAP_Z);
@@ -535,7 +491,6 @@ for (let i = 1; i <= 4; i++) {
     roomGroup.position.set(poi.x, 0.75, poi.z);
 
     // Wing rooms face the courtyard; back-corridor rooms use their assigned angle
-    // (0 for the flat run, ±45° for the two rooms angled into the bevel nooks)
     if (poi.rot !== undefined) {
       roomGroup.rotation.y = poi.rot;
     } else if (poi.x < 0 && poi.z > B.backInner) {
@@ -557,14 +512,8 @@ for (let i = 1; i <= 4; i++) {
     roomMesh.receiveShadow = true;
     roomGroup.add(roomMesh);
 
-    // Glazing on the courtyard-facing side. `windows` can be:
-    //   - a number N: N equal-width panes with mullion gaps between them
-    //     (the wing rooms, plus most wide merged corridor rooms use this)
-    //   - an array of relative weights, e.g. [1, 1, 2]: panes sized
-    //     proportionally to those weights instead of evenly — used when a
-    //     merged room's sub-spaces aren't the same width (Admin and Clinic
-    //     each get their own window, while the wider merged Chapel/Kiosks
-    //     portion gets one single, wider window instead of being split).
+    // Glazing on the courtyard-facing side. `windows` can be a number N
+    // (N equal panes) or an array of relative weights, e.g. [1, 1.2, 1.2].
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, roughness: 0.1, transparent: true, opacity: 0.5 });
     const facadeW = poi.w * 0.8;
     const mullionGap = 0.3;
@@ -612,9 +561,8 @@ if (closeBtn) {
     event.stopPropagation();
     if (overlay) overlay.classList.add('hidden');
 
-    // If this session came from a scanned QR code (cp param resolved to an
-    // actual room), fly straight into that room's floor instead of sitting
-    // on the all-floors overview - this is the "scan -> auto zoom" moment.
+    // If this session came from a scanned QR code, fly straight into that
+    // room's floor instead of sitting on the all-floors overview.
     if (spotRoom) {
       isolateAndZoomToRoom(spotRoom);
     } else {
@@ -625,11 +573,8 @@ if (closeBtn) {
 
 /* ------------------------------------------------------------------
    "X" EXIT-ZOOM BUTTON
-   ------------------------------------------------------------------
-   Built in JS (not the HTML) so it works regardless of markup. Shown
-   any time the camera is isolated on a single layer/room - including
-   the automatic zoom that happens right after a QR scan - and tapping
-   it flies back out to the all-floors overview.
+   Shown any time the camera is isolated on a single layer/room;
+   tapping it flies back out to the all-floors overview.
 ------------------------------------------------------------------- */
 let exitZoomBtn = null;
 function ensureExitZoomBtn() {
@@ -682,8 +627,7 @@ window.addEventListener('pointerup', (event) => {
   if (!pointerStart) return;
   const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
   pointerStart = null;
-  // A slightly larger drag threshold than a mouse would need, since a
-  // finger naturally wobbles a few extra pixels during a tap on touchscreens.
+  // Slightly larger drag threshold since a finger wobbles during a tap.
   if (moved > 12) return;
 
   if (!overlay || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || event.target.closest('#dashboard-panel') || event.target.closest('#dashboard-btn') || !overlay.classList.contains('hidden')) return;
@@ -726,6 +670,7 @@ function showRoomDetails(room) {
   const rd = document.getElementById('room-desc');
   const rh = document.getElementById('room-hours');
   const rs = document.getElementById('room-status');
+  const gallery = document.getElementById('room-gallery');
 
   if (rn) rn.innerText = room.name;
   if (rlt) rlt.innerText = `Floor Layer ${room.layer}`;
@@ -734,6 +679,23 @@ function showRoomDetails(room) {
   if (rs) {
     rs.innerText = room.status;
     rs.style.color = (room.status === 'Open') ? '#0B3B24' : '#B04A2F';
+  }
+
+  // Photos: shown only for rooms that have an `images` list
+  if (gallery) {
+    gallery.innerHTML = '';
+    const imgs = room.images || [];
+    gallery.classList.toggle('has-images', imgs.length > 0);
+    gallery.classList.toggle('two', imgs.length === 2);
+    imgs.forEach(src => {
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = room.name;
+      img.loading = 'lazy';
+      img.draggable = false;
+      img.addEventListener('error', () => img.remove()); // hide broken images
+      gallery.appendChild(img);
+    });
   }
 
   if (infoPanel) infoPanel.classList.add('active');
@@ -767,10 +729,8 @@ function isolateAndZoomFloor(selectedLayer, floorY) {
   isTransitioning = true;
 }
 
-// Zooms straight into the specific room a scanned QR checkpoint points to:
-// isolates that room's floor layer (like isolateAndZoomFloor), but frames
-// the camera tight on the room's own x/z instead of the whole floor centre,
-// highlights the pin, and pops the info panel open automatically.
+// Zooms straight into a specific room: isolates its floor, frames the
+// camera tight on the room, and pops the info panel open automatically.
 function isolateAndZoomToRoom(poi) {
   const floorY = (poi.layer - 1) * spacing;
 
@@ -789,7 +749,6 @@ function isolateAndZoomToRoom(poi) {
   if (userPin) userPin.visible = (poi.layer === currentSpot.layer);
   setExitZoomBtnVisible(true);
 
-  // Close, angled framing on just this room rather than the whole floor.
   targetLookAt.set(poi.x, floorY + 0.5, poi.z);
   targetCamPos.set(poi.x + 6, floorY + 7, poi.z + 8);
   isTransitioning = true;
@@ -798,13 +757,9 @@ function isolateAndZoomToRoom(poi) {
 }
 
 /* ------------------------------------------------------------------
-   HIGHLIGHTS DASHBOARD
-   ------------------------------------------------------------------
-   A simple list panel of every room flagged in `highlightedIds` (the
-   student lounges, cafeteria and both library floors). Toggled from
-   the "Highlights" button in the top plaque; picking a room in the
-   list closes the panel and flies the camera straight to it, same as
-   scanning that room's QR code.
+   SCHOOL AMENITIES DASHBOARD
+   A list panel of every room flagged in `highlightedIds`. Picking a
+   room flies the camera straight to it, same as scanning its QR code.
 ------------------------------------------------------------------- */
 const dashboardBtn = document.getElementById('dashboard-btn');
 const dashboardPanel = document.getElementById('dashboard-panel');
@@ -873,9 +828,7 @@ function animate() {
 }
 animate();
 
-// Debounced resize handler: mobile browsers fire resize repeatedly while
-// the address bar animates in/out, so this avoids doing a full relayout
-// every single frame of that animation.
+// Debounced resize handler for mobile address-bar animations.
 let resizeTimeout = null;
 function handleResize() {
   const { w, h } = getViewportSize();
@@ -893,7 +846,6 @@ window.addEventListener('resize', () => {
   resizeTimeout = setTimeout(handleResize, 100);
 });
 window.addEventListener('orientationchange', () => {
-  // Give the browser chrome time to settle before reading the new size.
   setTimeout(handleResize, 100);
   setTimeout(handleResize, 400);
 });
