@@ -30,8 +30,6 @@
 
     * {
       box-sizing: border-box;
-      /* Kill the iOS long-press "callout" menu and Android's tap highlight
-         flash, which otherwise pop up over 3D room hit-boxes. */
       -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
     }
@@ -50,8 +48,6 @@
       color: var(--ink);
       -webkit-text-size-adjust: 100%;
       text-size-adjust: 100%;
-      /* Stops iOS Safari's rubber-band/bounce scroll and Android's
-         overscroll glow from fighting with the OrbitControls drag. */
       overscroll-behavior: none;
       touch-action: none;
       -webkit-user-select: none;
@@ -219,8 +215,7 @@
     .start-btn:active { background: var(--canopy-dark); }
 
     /* Sliding room info panel — a compact bottom sheet rather than a
-       full-height drawer, so it never covers the whole screen and the
-       map stays visible around it. */
+       full-height drawer, so the map stays visible around it. */
     #info-panel {
       position: absolute;
       left: 0;
@@ -314,6 +309,29 @@
       margin-top: 6px;
       letter-spacing: 0.01em;
     }
+
+    /* Room photos: 1 image = full width, 2 images = side by side */
+    .room-gallery { display: none; margin-top: 14px; }
+    .room-gallery.has-images {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+    }
+    .room-gallery img {
+      flex: 0 0 100%;
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      scroll-snap-align: start;
+      background: #e9e6db;
+    }
+    .room-gallery.two img { flex: 0 0 calc(50% - 4px); width: calc(50% - 4px); }
+
     .room-desc {
       color: var(--ink-soft);
       line-height: 1.5;
@@ -339,9 +357,8 @@
     #room-status { color: var(--canopy); font-weight: 600; }
 
     /* School Amenities dashboard panel — a right-side sliding sheet listing
-       every flagged room (cafeteria, both library floors, both student
-       lounges), each tappable to fly straight to it. It stays open while
-       you hop between amenities; the room details sheet (z-index 20)
+       every flagged room, each tappable to fly straight to it. It stays open
+       while you hop between amenities; the room details sheet (z-index 20)
        slides over it. */
     #dashboard-panel {
       position: absolute;
@@ -455,7 +472,6 @@
       outline: 2px solid var(--brass);
       outline-offset: 2px;
     }
-    /* Currently selected amenity in the list */
     .dash-item.selected {
       border-color: var(--brass);
       background: #fbf6ea;
@@ -515,7 +531,7 @@
         <li><strong>Tap any floor</strong> to isolate that level.</li>
         <li><strong>Tap a room</strong> to see details and hours.</li>
         <li><strong>Tap the floor slab</strong> to return to all floors.</li>
-        <li><strong>Tap "School Amenities"</strong> Tap "School Amenities" to open a list of room locations and select your desired room or location to jump directly to it.</li>
+        <li><strong>Tap "School Amenities"</strong> to open a list of room locations and select your desired room or location to jump directly to it.</li>
         <li><strong>Pinch with two fingers to zoom in and out</strong></li>
       </ul>
       <button id="close-instructions" class="start-btn">Explore campus</button>
@@ -538,7 +554,7 @@
     <button id="dashboard-btn" type="button">★ School Amenities</button>
   </div>
 
-  <!-- Minimal Room Details Bottom Sheet -->
+  <!-- Room Details Bottom Sheet -->
   <div id="info-panel">
     <div class="panel-drag-handle"></div>
     <div>
@@ -547,6 +563,10 @@
         <h2 id="room-name" class="panel-title">Room Name</h2>
         <span id="room-layer-tag" class="room-tag">Layer 1</span>
       </div>
+
+      <!-- Room photos (filled in by trial.js) -->
+      <div id="room-gallery" class="room-gallery"></div>
+
       <p id="room-desc" class="room-desc">Select a room to view details.</p>
       <div class="room-meta">
         <div class="room-meta-row">
