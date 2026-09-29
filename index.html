@@ -329,6 +329,7 @@
       border: 1px solid var(--line);
       scroll-snap-align: start;
       background: #e9e6db;
+      cursor: zoom-in; /* tap to enlarge */
     }
     .room-gallery.two img { flex: 0 0 calc(50% - 4px); width: calc(50% - 4px); }
 
@@ -508,6 +509,50 @@
     body.dash-open #exit-zoom-btn {
       right: calc(min(300px, 78vw) + 16px + env(safe-area-inset-right, 0px)) !important;
     }
+
+    /* Tap-to-enlarge photo viewer */
+    #image-lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;               /* above the info panel and the × exit button */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px))
+               calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+      background: rgba(8, 20, 13, 0.92);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+      touch-action: manipulation;
+      cursor: zoom-out;
+    }
+    #image-lightbox.active { opacity: 1; visibility: visible; }
+
+    #lightbox-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      -webkit-user-drag: none;
+    }
+
+    #lightbox-close {
+      position: absolute;
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      right: calc(16px + env(safe-area-inset-right, 0px));
+      width: 44px;
+      height: 44px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 1.2rem;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #lightbox-close:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
   </style>
 
   <!-- Import Three.js via ES Modules -->
@@ -589,6 +634,12 @@
       <span class="dash-subtitle"></span>
     </div>
     <div id="dashboard-list"></div>
+  </div>
+
+  <!-- Full-screen photo viewer -->
+  <div id="image-lightbox" aria-hidden="true">
+    <button id="lightbox-close" type="button" aria-label="Close photo">✕</button>
+    <img id="lightbox-img" alt="">
   </div>
 
   <script type="module" src="./trial.js"></script>
