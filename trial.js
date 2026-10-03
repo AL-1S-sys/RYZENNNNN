@@ -151,7 +151,8 @@ const floorPlans = {
         x: 8.6, z:  5.05, w: 3.3, d: WING_D }
     ],
     corridor: [
-      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: 'N/A', status: 'Close' },
+      { id: 'l3_libupper',    name: 'Library Upper Floor', desc: 'Book stacks, quiet reading, and the circulation desk.', hours: 'N/A', status: 'Close',
+        images: ['images/library-upper.jpg'] },
       { id: 'l3_comlab2',     name: 'ROOM 304', desc: 'General-use lab, printing station, and video/audio editing suites.', hours: '8:00 AM - 6:00 PM', status: 'Open',
         x: -5.35, z: BACK_SLOT_Z, w: BIG_W, d: BACK_D },
       { id: 'l3_facultyb',    name: 'ROOM 305', desc: 'IT faculty offices with an adjoining group work room.', hours: '8:00 AM - 5:00 PM', status: 'Open',
@@ -162,6 +163,7 @@ const floorPlans = {
         // Sits immediately next to the restroom, 1.86 centre-to-centre spacing.
         x: 0.6 + 1.86, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D },
       { id: 'l3_electronics', name: 'Student lounge1', desc: 'A student lounge is a dedicated, comfortable space on campus designed for students to relax, socialize, study, or unwind between classes.', hours: '24/7', status: 'Open',
+        images: ['images/student-lounge-1.jpg'],
         x: 0.6 + 1.86 * 2, z: BACK_SLOT_Z, rot: 0, w: BACK_W, d: BACK_D }
     ]
   },
@@ -184,6 +186,7 @@ const floorPlans = {
       { id: 'l4_storage_alumni', name: 'ROOM 406/ROOM 407', desc: 'COMLAB 1 and COMLAB 2.', hours: '8:00 AM - 5:00 PM (storage side restricted)', status: 'Open',
         x:  2.95, z: BACK_SLOT_Z, w: 2.7, d: BACK_D, windows: 2 },
       { id: 'l4_printroom', name: 'Student Lounge2', desc: 'Games, seating, and campus views.  ', hours: '24/7', status: 'Open',
+        images: ['images/student-lounge-2.jpg'],
         x:  5.3, z: BACK_SLOT_Z, w: SMALL_W, d: BACK_D }
     ]
 
@@ -632,7 +635,7 @@ window.addEventListener('pointerup', (event) => {
   if (moved > 12) return;
 
   // Ignore taps on any UI layer (including the photo viewer) so they never hit the map underneath
-  if (!overlay || event.target.closest('#image-lightbox') || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || event.target.closest('#dashboard-panel') || event.target.closest('#dashboard-btn') || !overlay.classList.contains('hidden')) return;
+  if (!overlay || event.target.closest('#image-lightbox') || event.target.closest('#info-panel') || event.target.closest('#ui-container') || event.target.closest('#exit-zoom-btn') || event.target.closest('#dashboard-panel') || event.target.closest('#dashboard-btn') || event.target.closest('#nav-panel') || event.target.closest('#nav-pill') || !overlay.classList.contains('hidden')) return;
 
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -705,6 +708,8 @@ window.addEventListener('keydown', (e) => {
 
 function showRoomDetails(room) {
   closeLightbox();
+  closeNavPanel();
+  currentDetailRoom = room;
 
   const rn = document.getElementById('room-name');
   const rlt = document.getElementById('room-layer-tag');
@@ -856,6 +861,589 @@ if (dashboardCloseBtn) {
   });
 }
 
+/* ------------------------------------------------------------------
+   POINT-TO-POINT NAVIGATION
+   - Every floor has the same walkable corridor network (back run + two
+     wing runs). Rooms plug into it at their door, and the two staircases
+     link each floor to the next.
+   - Dijkstra finds the shortest path, then a glowing guide line with
+     moving dots is drawn along it (and up/down the stairs).
+   - UI: "Directions" button (From / To), "Directions to here" button in
+     the room details sheet, and a step-by-step list.
+------------------------------------------------------------------- */
+const NAV_Y = 0.3;            // guide line height above each floor group's origin
+const NAV_BACK_X = 8.79;      // how far the back corridor reaches (corner nooks)
+const NAV_TUBE_R = 0.13;      // thickness of the guide line
+const STAIR_COST = 7;         // path "cost" of climbing one floor
+const ROUTE_SPEED = 3.2;      // moving-dot speed
+const DOT_SPACING = 1.5;      // distance between moving dots
+
+const roomById = {};
+poiData3D.forEach(p => { roomById[p.id] = p; });
+
+let currentDetailRoom = null;
+
+// Same facing rules the 3D rooms use, so the door is where the glass is.
+function roomRot(poi) {
+  if (poi.rot !== undefined) return poi.rot;
+  if (poi.x < 0 && poi.z > B.backInner) return Math.PI / 2;
+  if (poi.x > 0 && poi.z > B.backInner) return -Math.PI / 2;
+  return 0;
+}
+function doorPoint(poi) {
+  const r = roomRot(poi);
+  return { x: poi.x + Math.sin(r) * poi.d / 2, z: poi.z + Math.cos(r) * poi.d / 2 };
+}
+// Where a room's door meets the corridor
+function roomAccess(poi) {
+  if (poi.z > B.backInner) {
+    return {
+      seg: poi.x < 0 ? 'L' : 'R',
+      x: poi.x < 0 ? -wingPathX : wingPathX,
+      z: Math.min(Math.max(poi.z, backPathZ), B.frontEdge)
+    };
+  }
+  return { seg: 'B', x: Math.min(Math.max(poi.x, -NAV_BACK_X), NAV_BACK_X), z: backPathZ };
+}
+
+/* ---- Walkable graph ---- */
+const navNodes = {};
+const navAdj = {};
+(function buildNavGraph() {
+  const addNode = (key, x, z, floor) => {
+    navNodes[key] = { x, z, floor };
+    navAdj[key] = [];
+    return key;
+  };
+  const link = (a, b, cost) => {
+    navAdj[a].push({ to: b, cost });
+    navAdj[b].push({ to: a, cost });
+  };
+  const chain = (list, axis) => {
+    list.sort((m, n) => navNodes[m][axis] - navNodes[n][axis]);
+    for (let i = 1; i < list.length; i++) {
+      const a = navNodes[list[i - 1]], b = navNodes[list[i]];
+      link(list[i - 1], list[i], Math.hypot(a.x - b.x, a.z - b.z));
+    }
+  };
+
+  for (let f = 1; f <= 4; f++) {
+    const segL = [], segB = [], segR = [];
+
+    const BL = addNode(`${f}:BL`, -wingPathX, backPathZ, f);   // back-left junction
+    const BR = addNode(`${f}:BR`,  wingPathX, backPathZ, f);   // back-right junction
+    segB.push(BL, BR);
+    segL.push(BL);
+    segR.push(BR);
+
+    segB.push(addNode(`${f}:BACK_L`, -NAV_BACK_X, backPathZ, f));
+    segB.push(addNode(`${f}:BACK_R`,  NAV_BACK_X, backPathZ, f));
+    segL.push(addNode(`${f}:END_L`, -wingPathX, B.frontEdge, f));
+    segR.push(addNode(`${f}:END_R`,  wingPathX, B.frontEdge, f));
+
+    // Staircase landings (match the stairs drawn in the floor loop)
+    segB.push(addNode(`${f}:ST_BACK`, 6.2, backPathZ, f));
+    segL.push(addNode(`${f}:ST_LEFT`, -wingPathX, LEFT_WING_GAP_Z, f));
+
+    poiData3D.filter(p => p.layer === f).forEach(p => {
+      const a = roomAccess(p);
+      const key = addNode(`${f}:room:${p.id}`, a.x, a.z, f);
+      (a.seg === 'B' ? segB : a.seg === 'L' ? segL : segR).push(key);
+    });
+
+    chain(segB, 'x');
+    chain(segL, 'z');
+    chain(segR, 'z');
+  }
+
+  // Stairs join each floor to the one above
+  for (let f = 1; f < 4; f++) {
+    ['ST_BACK', 'ST_LEFT'].forEach(n => link(`${f}:${n}`, `${f + 1}:${n}`, STAIR_COST));
+  }
+})();
+
+function findPath(start, end) {
+  const dist = {}, prev = {}, done = {};
+  Object.keys(navNodes).forEach(k => { dist[k] = Infinity; });
+  dist[start] = 0;
+  while (true) {
+    let u = null, best = Infinity;
+    for (const k in dist) {
+      if (!done[k] && dist[k] < best) { best = dist[k]; u = k; }
+    }
+    if (u === null) return null;
+    if (u === end) break;
+    done[u] = true;
+    navAdj[u].forEach(e => {
+      const nd = best + e.cost;
+      if (nd < dist[e.to]) { dist[e.to] = nd; prev[e.to] = u; }
+    });
+  }
+  const path = [end];
+  while (path[0] !== start) path.unshift(prev[path[0]]);
+  return path;
+}
+
+/* ---- Guide line (3D) ---- */
+const routeGroup = new THREE.Group();
+scene.add(routeGroup);
+
+// depthTest off + high renderOrder so the line stays visible through floor slabs
+const routeLineMat  = new THREE.MeshBasicMaterial({ color: 0x1a73e8, transparent: true, opacity: 0.95, depthTest: false });
+const routeDotMat   = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1,    depthTest: false });
+const routeStartMat = new THREE.MeshBasicMaterial({ color: 0x1a73e8, transparent: true, opacity: 1,    depthTest: false });
+const routeDestMat  = new THREE.MeshBasicMaterial({ color: 0x2e7d32, transparent: true, opacity: 1,    depthTest: false });
+const jointGeo      = new THREE.SphereGeometry(NAV_TUBE_R, 10, 10);
+const dotGeo        = new THREE.SphereGeometry(0.2, 12, 12);
+const markerGeo     = new THREE.SphereGeometry(0.42, 16, 16);
+const destConeGeo   = new THREE.ConeGeometry(0.5, 1.2, 8);
+
+const routeState = {
+  active: false, items: [], dots: [], world: [], pts: [], cum: [], total: 0,
+  destCone: null, destBaseY: 0, toName: ''
+};
+
+function routeToWorld(p) {
+  return new THREE.Vector3(p.x, (p.floor - 1) * spacing + NAV_Y, p.z);
+}
+
+function addRouteMesh(mesh, layers) {
+  mesh.renderOrder = 999;
+  routeGroup.add(mesh);
+  routeState.items.push({ mesh, layers });
+  return mesh;
+}
+
+function makeSegmentMesh(a, b) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  if (len < 0.01) return null;
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(NAV_TUBE_R, NAV_TUBE_R, len, 8), routeLineMat);
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  mesh.userData.ownGeo = true;
+  return mesh;
+}
+
+function clearRoute() {
+  routeState.items.forEach(({ mesh }) => {
+    if (mesh.userData.ownGeo) mesh.geometry.dispose();
+    routeGroup.remove(mesh);
+  });
+  routeState.dots.forEach(d => routeGroup.remove(d.mesh));
+  routeState.items = [];
+  routeState.dots = [];
+  routeState.world = [];
+  routeState.pts = [];
+  routeState.cum = [];
+  routeState.total = 0;
+  routeState.destCone = null;
+  routeState.active = false;
+  updateNavPill();
+}
+
+function drawRoute(pts, toRoom) {
+  clearRoute();
+
+  const world = pts.map(routeToWorld);
+  routeState.pts = pts;
+  routeState.world = world;
+
+  const cum = [0];
+  for (let i = 0; i < pts.length; i++) {
+    const joint = addRouteMesh(new THREE.Mesh(jointGeo, routeLineMat), [pts[i].floor]);
+    joint.position.copy(world[i]);
+    if (i > 0) {
+      const seg = makeSegmentMesh(world[i - 1], world[i]);
+      if (seg) addRouteMesh(seg, [pts[i - 1].floor, pts[i].floor]);
+      cum.push(cum[i - 1] + world[i - 1].distanceTo(world[i]));
+    }
+  }
+  routeState.cum = cum;
+  routeState.total = cum[cum.length - 1];
+
+  // Start (blue) and destination (green) markers
+  const startM = addRouteMesh(new THREE.Mesh(markerGeo, routeStartMat), [pts[0].floor]);
+  startM.position.copy(world[0]);
+  const endM = addRouteMesh(new THREE.Mesh(markerGeo, routeDestMat), [pts[pts.length - 1].floor]);
+  endM.position.copy(world[world.length - 1]);
+
+  // Green arrow floating over the destination room
+  const coneBaseY = (toRoom.layer - 1) * spacing + 2.9;
+  const cone = addRouteMesh(new THREE.Mesh(destConeGeo, routeDestMat), [toRoom.layer]);
+  cone.rotation.x = Math.PI;
+  cone.position.set(toRoom.x, coneBaseY, toRoom.z);
+  routeState.destCone = cone;
+  routeState.destBaseY = coneBaseY;
+
+  // Moving dots that flow from start to destination
+  const dotCount = Math.max(1, Math.ceil(routeState.total / DOT_SPACING));
+  for (let k = 0; k < dotCount; k++) {
+    const dot = new THREE.Mesh(dotGeo, routeDotMat);
+    dot.renderOrder = 1000;
+    routeGroup.add(dot);
+    routeState.dots.push({ mesh: dot });
+  }
+
+  routeState.toName = toRoom.name;
+  routeState.active = true;
+  updateNavPill();
+}
+
+function updateRoute(nowSec) {
+  if (!routeState.active) return;
+
+  routeState.items.forEach(({ mesh, layers }) => {
+    mesh.visible = layers.some(l => floorMeshes[l] && floorMeshes[l].visible);
+  });
+
+  const { pts, cum, world, total } = routeState;
+  const flow = (nowSec * ROUTE_SPEED) % DOT_SPACING;
+  routeState.dots.forEach((d, k) => {
+    const s = flow + k * DOT_SPACING;
+    if (s > total) { d.mesh.visible = false; return; }
+    let i = 1;
+    while (i < cum.length - 1 && s > cum[i]) i++;
+    const segLen = (cum[i] - cum[i - 1]) || 1;
+    const t = Math.min(1, Math.max(0, (s - cum[i - 1]) / segLen));
+    d.mesh.position.lerpVectors(world[i - 1], world[i], t);
+    d.mesh.visible = [pts[i - 1].floor, pts[i].floor].some(l => floorMeshes[l] && floorMeshes[l].visible);
+  });
+
+  if (routeState.destCone) {
+    routeState.destCone.position.y = routeState.destBaseY + Math.sin(nowSec * 3) * 0.15;
+    routeState.destCone.rotation.y = nowSec * 1.5;
+  }
+}
+
+/* ---- Directions text ---- */
+const fmtM = (d) => `${Math.max(1, Math.round(d))} m`;
+const stairLabel = (key) => key.includes('ST_BACK') ? 'back-corridor staircase' : 'left-wing staircase';
+
+function buildSteps(keys, fromRoom, toRoom, startLeg, endLeg) {
+  const steps = [`Start at ${fromRoom.name} (Floor ${fromRoom.layer}) and head out into the corridor.`];
+  let walk = startLeg;
+  let stairRun = null;
+
+  const flushStairs = () => {
+    if (!stairRun) return;
+    steps.push(`Take the ${stairRun.name} ${stairRun.to > stairRun.from ? 'up' : 'down'} to Floor ${stairRun.to}.`);
+    stairRun = null;
+  };
+
+  for (let i = 1; i < keys.length; i++) {
+    const a = navNodes[keys[i - 1]], b = navNodes[keys[i]];
+    if (a.floor !== b.floor) {
+      if (!stairRun) {
+        if (walk > 0.5) steps.push(`Walk about ${fmtM(walk)} to the ${stairLabel(keys[i - 1])}.`);
+        walk = 0;
+        stairRun = { name: stairLabel(keys[i - 1]), from: a.floor, to: b.floor };
+      } else {
+        stairRun.to = b.floor;
+      }
+    } else {
+      flushStairs();
+      walk += Math.hypot(a.x - b.x, a.z - b.z);
+    }
+  }
+  flushStairs();
+
+  walk += endLeg;
+  steps.push(`Walk about ${fmtM(walk)} to ${toRoom.name}.`);
+  steps.push(`You've arrived at ${toRoom.name} (Floor ${toRoom.layer}).`);
+  return steps;
+}
+
+/* ---- Directions UI (built here so index.html needs no changes) ---- */
+const navStyle = document.createElement('style');
+navStyle.textContent = `
+  #nav-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; margin-top: 8px; padding: 9px 10px;
+    background: var(--paper); color: var(--canopy);
+    border: 1px solid var(--canopy); border-radius: 4px;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.8rem;
+    cursor: pointer; pointer-events: auto; touch-action: manipulation;
+  }
+  #nav-btn:active { background: #eee9d9; }
+  #nav-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  #nav-panel {
+    position: absolute; left: 0; right: 0; bottom: -100%;
+    width: 100%; max-width: 480px; margin: 0 auto;
+    max-height: min(55vh, 440px);
+    background: var(--paper); border: 1px solid var(--line); border-bottom: none;
+    border-radius: 18px 18px 0 0; z-index: 18;
+    padding: 14px 22px calc(18px + env(safe-area-inset-bottom, 0px));
+    padding-left: calc(22px + env(safe-area-inset-left, 0px));
+    padding-right: calc(22px + env(safe-area-inset-right, 0px));
+    box-sizing: border-box; box-shadow: 0 -8px 28px rgba(11, 59, 36, 0.18);
+    transition: bottom 0.3s ease;
+    overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+    -webkit-user-select: text; user-select: text;
+  }
+  #nav-panel.active { bottom: 0; }
+  .nav-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
+  .nav-header { position: relative; padding-right: 34px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .nav-title { margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: 1.1rem; color: var(--canopy); }
+  #nav-close {
+    position: absolute; top: -4px; right: -6px; width: 32px; height: 32px;
+    border: none; background: transparent; color: var(--ink-soft); font-size: 1.1rem;
+    border-radius: 50%; cursor: pointer; touch-action: manipulation;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #nav-close:active { background: var(--line); color: var(--ink); }
+  .nav-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 0.7rem; color: var(--brass); }
+  .nav-field select {
+    width: 100%; padding: 9px 10px; font-family: 'Inter', sans-serif; font-size: 16px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+  }
+  .nav-swap-row { display: flex; justify-content: center; margin-top: 8px; }
+  #nav-swap {
+    border: 1px solid var(--line); background: #fff; color: var(--canopy);
+    border-radius: 14px; padding: 3px 14px; font-size: 0.9rem; cursor: pointer; touch-action: manipulation;
+  }
+  .nav-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .nav-actions button {
+    flex: 1; padding: 11px 10px; border-radius: 4px; cursor: pointer; touch-action: manipulation;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.85rem;
+  }
+  #nav-go { background: var(--canopy); color: var(--paper); border: none; }
+  #nav-go:active { background: var(--canopy-dark); }
+  #nav-clear { background: transparent; color: var(--ink-soft); border: 1px solid var(--line); flex: 0 0 90px; }
+  #nav-summary { margin-top: 12px; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.4; }
+  #nav-summary strong { color: var(--canopy); }
+  #nav-steps { list-style: none; margin: 10px 0 0; padding: 0; counter-reset: navstep; }
+  #nav-steps li {
+    counter-increment: navstep; position: relative; padding: 9px 0 9px 30px;
+    border-top: 1px solid var(--line); font-size: 0.84rem; line-height: 1.45; color: var(--ink);
+  }
+  #nav-steps li::before {
+    content: counter(navstep); position: absolute; left: 0; top: 9px; width: 20px; height: 20px;
+    border-radius: 50%; background: var(--canopy); color: var(--paper); font-size: 0.7rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #nav-steps li.arrive::before { background: #2e7d32; }
+
+  #info-dir-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; margin-top: 14px; padding: 11px 10px;
+    background: var(--canopy); color: var(--paper); border: none; border-radius: 4px;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.85rem;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #info-dir-btn:active { background: var(--canopy-dark); }
+
+  #nav-pill {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 32px); padding: 10px 18px; border-radius: 22px; border: none;
+    background: var(--canopy); color: var(--paper); z-index: 16; display: none;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.82rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); cursor: pointer; touch-action: manipulation;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+`;
+document.head.appendChild(navStyle);
+
+// Directions button under "School Amenities"
+const uiContainer = document.getElementById('ui-container');
+const navBtn = document.createElement('button');
+navBtn.id = 'nav-btn';
+navBtn.type = 'button';
+navBtn.textContent = '\u27A4 Directions';
+if (uiContainer) uiContainer.appendChild(navBtn);
+
+// Directions sheet
+const navPanel = document.createElement('div');
+navPanel.id = 'nav-panel';
+navPanel.innerHTML = `
+  <div class="nav-handle"></div>
+  <div class="nav-header">
+    <button id="nav-close" type="button" aria-label="Close directions">\u2715</button>
+    <h2 class="nav-title">Directions</h2>
+  </div>
+  <label class="nav-field">From<select id="nav-from"></select></label>
+  <div class="nav-swap-row"><button id="nav-swap" type="button" aria-label="Swap start and destination">\u21C5</button></div>
+  <label class="nav-field" style="margin-top:6px">To<select id="nav-to"></select></label>
+  <div class="nav-actions">
+    <button id="nav-go" type="button">Show route</button>
+    <button id="nav-clear" type="button">Clear</button>
+  </div>
+  <div id="nav-summary"></div>
+  <ol id="nav-steps"></ol>
+`;
+document.body.appendChild(navPanel);
+
+// Floating "route active" chip, shown while the sheet is closed
+const navPill = document.createElement('button');
+navPill.id = 'nav-pill';
+navPill.type = 'button';
+document.body.appendChild(navPill);
+
+const navFromSel = document.getElementById('nav-from');
+const navToSel = document.getElementById('nav-to');
+const navSummary = document.getElementById('nav-summary');
+const navSteps = document.getElementById('nav-steps');
+
+// Room labels (unique per floor) for the dropdowns
+const navLabel = {};
+(function buildNavLabels() {
+  const counts = {}, seen = {};
+  poiData3D.forEach(p => { const k = `${p.layer}|${p.name}`; counts[k] = (counts[k] || 0) + 1; });
+  poiData3D.forEach(p => {
+    const k = `${p.layer}|${p.name}`;
+    seen[k] = (seen[k] || 0) + 1;
+    navLabel[p.id] = counts[k] > 1 ? `${p.name} (${String.fromCharCode(64 + seen[k])})` : p.name;
+  });
+})();
+
+const navDefaultFrom = currentSpot.targetId;
+
+function fillNavSelect(sel, placeholder) {
+  sel.innerHTML = '';
+  if (placeholder) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = placeholder;
+    sel.appendChild(o);
+  }
+  for (let f = 1; f <= 4; f++) {
+    const group = document.createElement('optgroup');
+    group.label = `Floor ${f}`;
+    poiData3D
+      .filter(p => p.layer === f)
+      .sort((a, b) => navLabel[a.id].localeCompare(navLabel[b.id], undefined, { numeric: true }))
+      .forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = navLabel[p.id] + (p.id === navDefaultFrom ? ' \u2022 You are here' : '');
+        group.appendChild(o);
+      });
+    sel.appendChild(group);
+  }
+}
+fillNavSelect(navFromSel, null);
+fillNavSelect(navToSel, 'Choose destination\u2026');
+navFromSel.value = navDefaultFrom;
+
+function setNavMessage(html) {
+  navSummary.innerHTML = html;
+  navSteps.innerHTML = '';
+}
+
+function updateNavPill() {
+  if (!navPill) return;
+  const show = routeState.active && !navPanel.classList.contains('active');
+  navPill.style.display = show ? 'block' : 'none';
+  if (show) navPill.textContent = `\u27A4 Route to ${routeState.toName} \u2022 tap for steps`;
+}
+
+function openNavPanel() {
+  if (infoPanel) infoPanel.classList.remove('active');
+  if (dashboardPanel) dashboardPanel.classList.remove('active');
+  navPanel.classList.add('active');
+  updateNavPill();
+}
+function closeNavPanel() {
+  navPanel.classList.remove('active');
+  updateNavPill();
+}
+
+function requestRoute() {
+  const fromId = navFromSel.value;
+  const toId = navToSel.value;
+  if (!toId) { setNavMessage('Choose a destination first.'); return; }
+  if (fromId === toId) { setNavMessage('You\u2019re already there \u2014 pick a different start or destination.'); return; }
+
+  const from = roomById[fromId], to = roomById[toId];
+  const keys = findPath(`${from.layer}:room:${fromId}`, `${to.layer}:room:${toId}`);
+  if (!keys) { setNavMessage('No walkable route was found between these two places.'); return; }
+
+  // Door-to-corridor legs at each end
+  const startDoor = doorPoint(from), endDoor = doorPoint(to);
+  const first = navNodes[keys[0]], last = navNodes[keys[keys.length - 1]];
+  const startLeg = Math.hypot(startDoor.x - first.x, startDoor.z - first.z);
+  const endLeg = Math.hypot(endDoor.x - last.x, endDoor.z - last.z);
+
+  // Polyline for the guide line
+  const pts = [];
+  const push = (x, z, floor) => {
+    const p = pts[pts.length - 1];
+    if (p && p.floor === floor && Math.hypot(p.x - x, p.z - z) < 0.01) return;
+    pts.push({ x, z, floor });
+  };
+  push(startDoor.x, startDoor.z, from.layer);
+  keys.forEach(k => push(navNodes[k].x, navNodes[k].z, navNodes[k].floor));
+  push(endDoor.x, endDoor.z, to.layer);
+
+  // Total walking distance (flat parts only)
+  let flat = startLeg + endLeg;
+  for (let i = 1; i < keys.length; i++) {
+    const a = navNodes[keys[i - 1]], b = navNodes[keys[i]];
+    if (a.floor === b.floor) flat += Math.hypot(a.x - b.x, a.z - b.z);
+  }
+
+  drawRoute(pts, to);
+
+  const where = from.layer === to.layer ? `Same floor (Floor ${from.layer})` : `Floor ${from.layer} \u2192 Floor ${to.layer}`;
+  navSummary.innerHTML = `<strong>${where}</strong> \u2022 about ${fmtM(flat)} of walking (approx.)`;
+  navSteps.innerHTML = '';
+  buildSteps(keys, from, to, startLeg, endLeg).forEach((text, i, arr) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    if (i === arr.length - 1) li.className = 'arrive';
+    navSteps.appendChild(li);
+  });
+
+  // Frame the route: one floor -> isolate it; several -> show the whole building
+  const floorsUsed = new Set(pts.map(p => p.floor));
+  if (floorsUsed.size === 1) {
+    const f = [...floorsUsed][0];
+    isolateAndZoomFloor(f, (f - 1) * spacing);
+  } else {
+    isolateAndZoomFloor('all', 0);
+  }
+}
+
+navBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (navPanel.classList.contains('active')) closeNavPanel(); else openNavPanel();
+});
+document.getElementById('nav-close').addEventListener('click', (e) => { e.stopPropagation(); closeNavPanel(); });
+document.getElementById('nav-go').addEventListener('click', (e) => { e.stopPropagation(); requestRoute(); });
+document.getElementById('nav-clear').addEventListener('click', (e) => {
+  e.stopPropagation();
+  clearRoute();
+  navSummary.innerHTML = '';
+  navSteps.innerHTML = '';
+  navToSel.value = '';
+});
+document.getElementById('nav-swap').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const f = navFromSel.value, t = navToSel.value;
+  if (!t) return;
+  navFromSel.value = t;
+  navToSel.value = f;
+});
+navPill.addEventListener('click', (e) => { e.stopPropagation(); openNavPanel(); });
+if (dashboardBtn) dashboardBtn.addEventListener('click', () => closeNavPanel());
+
+// "Directions to here" inside the room details sheet
+const infoDirBtn = document.createElement('button');
+infoDirBtn.id = 'info-dir-btn';
+infoDirBtn.type = 'button';
+infoDirBtn.textContent = '\u27A4 Directions to here';
+const roomMetaEl = infoPanel ? infoPanel.querySelector('.room-meta') : null;
+if (roomMetaEl && roomMetaEl.parentElement) roomMetaEl.parentElement.appendChild(infoDirBtn);
+infoDirBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!currentDetailRoom) return;
+  navToSel.value = currentDetailRoom.id;
+  openNavPanel();
+  requestRoute();
+});
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -868,6 +1456,7 @@ function animate() {
   }
 
   if (userPin && userPin.visible) userPin.rotation.y += 0.03;
+  updateRoute(performance.now() / 1000);
   controls.update();
   renderer.render(scene, camera);
 }
