@@ -131,6 +131,32 @@ const WING_SLOTS = [
 ];
 const WING_W = 5.0, WING_D = 4.0;   // w runs ALONG the wing, d runs ACROSS it
 
+// FACULTY ROOMS A + B (Layer 1, left wing) are THINNER than the other wing rooms.
+// FAC_D = how thick they are (across the wing). Their door side stays against the
+// corridor (x = -6.6); only the back wall moves inward. Make FAC_D bigger for a
+// thicker room, smaller for a thinner one.
+const FAC_D = 2.0;
+const FAC_FRONT_X = WING_SLOTS[0].x + WING_D / 2;   // -6.6: door side (stays put)
+const FAC_X = FAC_FRONT_X - FAC_D / 2;              // centre X of the thinner room
+
+// ANNEX (CIT DEPARTMENT): the long narrow room directly behind Faculty Room A + B.
+// It now sits INSIDE the floor slab (no longer outside the left wall).
+// It spans the full length of both faculty rooms. The room behind the faculty
+// rooms runs from their back wall (x = FAC_X - FAC_D/2) to the slab's left edge.
+// ANNEX_GAP = small space kept between the annex and the faculty rooms;
+// ANNEX_MARGIN = small space kept between the annex and the slab's left edge.
+const ANNEX_GAP = 0.1;
+const ANNEX_MARGIN = 0.3;
+const FAC_BACK_X = FAC_X - FAC_D / 2;                          // back wall of the faculty rooms (-8.6)
+const ANNEX_X_RIGHT = FAC_BACK_X - ANNEX_GAP;                  // annex edge nearest the faculty rooms
+const ANNEX_X_LEFT = B.outerLeft + ANNEX_MARGIN;               // annex edge nearest the slab edge
+const ANNEX_W = ANNEX_X_RIGHT - ANNEX_X_LEFT;                  // how far it sticks out (X direction)
+const ANNEX_X = (ANNEX_X_RIGHT + ANNEX_X_LEFT) / 2;            // centre X (inside the slab)
+const ANNEX_Z0 = WING_SLOTS[0].z - WING_W / 2;                 // back end (same as Faculty Room A's back edge)
+const ANNEX_Z1 = WING_SLOTS[1].z + WING_W / 2;                 // front end (same as Faculty Room B's front edge)
+const ANNEX_LEN = ANNEX_Z1 - ANNEX_Z0;                         // total length (Z direction)
+const ANNEX_Z = (ANNEX_Z0 + ANNEX_Z1) / 2;                     // centre Z
+
 
 /* ------------------------------------------------------------------
    4. ROOM DATA  (edit this section to change room info)
@@ -147,12 +173,15 @@ const checkpoints = {
   'STUDENT_LOUNGE_2': { name: 'Student Lounge 2',           layer: 4, targetId: 'l4_printroom' }
 };
 
-// Floor plans: for each floor, 4 `wings` rooms (in WING_SLOTS order)
+// Floor plans: for each floor, `wings` rooms (first 4 in WING_SLOTS order)
 // plus `corridor` rooms (in BACK_SLOTS order).
 //
 // Each room can have:
 //   id, name, desc, hours, status     -> info shown in the details panel
 //   x, z, w, d, rot                   -> optional position/size/rotation override
+//   access: 'B'                       -> optional: connect the room's door to the
+//                                        BACK corridor for navigation (used by rooms
+//                                        that sit outside the wings)
 //   windows                           -> number of glass panes, or an array of
 //                                        relative widths e.g. [1, 1.2, 1.2]
 //   images: ['images/a.jpg', ...]     -> photos (paths relative to index.html).
@@ -160,10 +189,23 @@ const checkpoints = {
 const floorPlans = {
   1: {
     wings: [
-      { id: 'l1_wing_left_a',  name: 'Faculty Room A', desc: 'Faculty desks and consultation space near the lobby.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_wing_left_b',  name: 'Faculty Room B', desc: 'Additional faculty desks opening onto the courtyard.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_wing_right_a', name: 'CELA DEPARTMENT', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
-      { id: 'l1_wing_right_b', name: 'CMA DEPARTMENT', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
+      // Faculty Room A + B are THIN: d = FAC_D, x = FAC_X (door side stays at the corridor).
+      { id: 'l1_wing_left_a',  name: 'Faculty Room A', desc: 'Faculty desks and consultation space near the lobby.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: FAC_X, d: FAC_D },
+      { id: 'l1_wing_left_b',  name: 'Faculty Room B', desc: 'Additional faculty desks opening onto the courtyard.', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: FAC_X, d: FAC_D },
+      // Right wing is split into 3 narrower rooms (same positions as Layer 3's right wing).
+      { id: 'l1_wing_right_a', name: 'CELA DEPARTMENT', desc: 'department office.', hours: '8:00 AM - 4:30 PM', status: 'Open',
+        x: 8.6, z: -1.85, w: 3.3, d: WING_D },
+      { id: 'l1_wing_right_b', name: 'CMA DEPARTMENT', desc: 'department.', hours: '8:00 AM - 4:30 PM', status: 'Open',
+        x: 8.6, z:  1.6,  w: 3.3, d: WING_D },
+      { id: 'l1_wing_right_c', name: 'CAS DEPARTMENT', desc: 'department office.', hours: '8:00 AM - 4:30 PM', status: 'Open',
+        x: 8.6, z:  5.05, w: 3.3, d: WING_D },
+      // Long narrow room BEHIND Faculty Room A + B, now INSIDE the floor slab.
+      // rot = PI turns its window side toward the back (-Z), which is the
+      // side the Main Lobby is on. Rename / edit the text to the real room.
+      { id: 'l1_faculty_annex', name: 'CIT DEPARTMENT', desc: '', hours: '8:00 AM - 5:00 PM', status: 'Open',
+        x: ANNEX_X, z: ANNEX_Z, w: ANNEX_W, d: ANNEX_LEN, rot: Math.PI, windows: 1, access: 'B' }
     ],
     corridor: [
       { id: 'l1_lobby',       name: 'Main Lobby & Security', desc: 'Main entrance, guard post, and visitor logbook.', hours: '6:00 AM - 9:00 PM', status: 'Open',
@@ -650,6 +692,9 @@ for (let i = 1; i <= 4; i++) {
   balconyMesh.receiveShadow = true;
   floorGroup.add(balconyMesh);
 
+  // (The old "annex pad" that stuck out from the left wall was removed:
+  //  the CIT Department annex now sits on the main slab itself.)
+
   // Corridor strips
   buildFloorPath().forEach(seg => floorGroup.add(seg));
 
@@ -1117,6 +1162,11 @@ function doorPoint(poi) {
 // Where the room's door meets the corridor.
 // seg: 'L' = left wing corridor, 'R' = right wing corridor, 'B' = back corridor
 function roomAccess(poi) {
+  // A room can ask to be linked to the back corridor (e.g. the Faculty Annex,
+  // whose window/door faces the back, toward the Main Lobby).
+  if (poi.access === 'B') {
+    return { seg: 'B', x: Math.min(Math.max(poi.x, -NAV_BACK_X), NAV_BACK_X), z: backPathZ };
+  }
   if (poi.z > B.backInner) {   // wing room
     return {
       seg: poi.x < 0 ? 'L' : 'R',
