@@ -106,8 +106,8 @@ const floorPlans = {
     wings: [
       { id: 'l1_wing_left_a',  name: 'Faculty Room A', desc: 'Faculty desks and consultation space near the lobby.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
       { id: 'l1_wing_left_b',  name: 'Faculty Room B', desc: 'Additional faculty desks opening onto the courtyard.', hours: '8:00 AM - 5:00 PM', status: 'Open' },
-      { id: 'l1_wing_right_a', name: 'CAS', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
-      { id: 'l1_wing_right_b', name: 'CAS', desc: 'cas department.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
+      { id: 'l1_wing_right_a', name: 'CELA DEPARTMENT', desc: '.', hours: '8:00 AM - 4:30 PM', status: 'Open' },
+      { id: 'l1_wing_right_b', name: 'CMA DEPARTMENT', desc: '.', hours: '8:00 AM - 4:30 PM', status: 'Open' }
     ],
     corridor: [
       { id: 'l1_lobby',       name: 'Main Lobby & Security', desc: 'Main entrance, guard post, and visitor logbook.', hours: '6:00 AM - 9:00 PM', status: 'Open',
