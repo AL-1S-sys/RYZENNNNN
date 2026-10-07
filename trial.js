@@ -423,26 +423,101 @@ const layerDisplay = document.getElementById('layer-display');
 const overlay = document.getElementById('instructions-overlay');
 const locationDisplay = document.getElementById('location-display');
 
-/* Reusable staircase builder: a row of steps rising along local +z */
-function makeStaircase(stepCount, stepDepth, riseStep = 0.38) {
-  const stairGroup = new THREE.Group();
-  for (let s = 0; s < stepCount; s++) {
-    const step = new THREE.Mesh(
-      new THREE.BoxGeometry(PATH_W * 0.8, 0.2, stepDepth),
-      new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.6 })
-    );
-    step.position.set(0, s * riseStep + 0.1, s * stepDepth);
-    step.castShadow = true;
-    step.receiveShadow = true;
-    stairGroup.add(step);
-  }
-  return stairGroup;
-}
-
-// The notch between the two left-wing rooms, used to place a second
+// The notch between the two left-wing rooms, used to place the spiral
 // staircase there on every floor.
 const LEFT_WING_GAP_START = WING_SLOTS[0].z + WING_D / 2;
 const LEFT_WING_GAP_Z = LEFT_WING_GAP_START + 0.15;
+
+/* ------------------------------------------------------------------
+   STAIRCASES
+   Back-right = ZIGZAG (two flights + landing), turned sideways so the
+                flights run left/right along the back corridor (X axis)
+   Left wing  = SPIRAL (2 turns around a centre post)
+   The 3D meshes AND the route guide line are both built from these
+   same definitions, so the line always follows the stair's shape.
+------------------------------------------------------------------- */
+const stairMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.6 });
+
+const ZIGZAG = { xStart: 5.95, xEnd: 7.15, z1: -5.6, z2: -6.3, steps: 10, width: 0.6 };
+const SPIRAL = { cx: -wingPathX, cz: LEFT_WING_GAP_Z, steps: 24, turns: 2, rOuter: 0.85, rRoute: 0.6, a0: -Math.PI / 2 };
+const SPIRAL_ENTRY_Z = SPIRAL.cz - SPIRAL.rRoute; // where the spiral starts on the corridor
+
+function makeZigzagStair() {
+  const g = new THREE.Group();
+  const z = ZIGZAG, rise = spacing / (z.steps * 2);
+  const tread = Math.abs(z.xEnd - z.xStart) / z.steps;
+  const landW = 0.4;
+  // w runs along X, d runs along Z
+  const addBlock = (w, d, h, x, zz) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stairMat);
+    m.position.set(x, 0.15 + h / 2, zz);
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m);
+  };
+  for (let s = 0; s < z.steps; s++) {
+    const t = (s + 0.5) / z.steps;
+    addBlock(tread, z.width, rise * (s + 1) - 0.01,
+             z.xStart + (z.xEnd - z.xStart) * t, z.z1);                    // flight 1 (up, heading right)
+    addBlock(tread, z.width, rise * (z.steps + s + 1) - 0.01,
+             z.xEnd + (z.xStart - z.xEnd) * t, z.z2);                      // flight 2 (back, heading left)
+  }
+  addBlock(landW, Math.abs(z.z1 - z.z2) + z.width, rise * z.steps - 0.01,
+           z.xEnd + landW / 2, (z.z1 + z.z2) / 2);                         // landing
+  return g;
+}
+
+function makeSpiralStair() {
+  const g = new THREE.Group();
+  const s = SPIRAL;
+  g.position.set(s.cx, 0, s.cz);
+  const rise = spacing / s.steps, stepAng = (s.turns * 2 * Math.PI) / s.steps;
+
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, spacing, 12), stairMat);
+  post.position.y = 0.15 + spacing / 2;
+  post.castShadow = true;
+  g.add(post);
+
+  const len = s.rOuter - 0.1;
+  for (let k = 0; k < s.steps; k++) {
+    const mid = s.a0 + (k + 0.5) * stepAng;
+    const step = new THREE.Mesh(new THREE.BoxGeometry(len, 0.1, 0.5), stairMat);
+    step.position.set(Math.cos(mid) * (0.1 + len / 2), 0.15 + rise * (k + 1) - 0.06, Math.sin(mid) * (0.1 + len / 2));
+    step.rotation.y = -mid;
+    step.castShadow = true; step.receiveShadow = true;
+    g.add(step);
+  }
+  return g;
+}
+
+// Guide-line shapes. y = height above the lower floor's guide line (0 → spacing).
+function zigzagRoute() {
+  const z = ZIGZAG, rise = spacing / (z.steps * 2), pts = [];
+  const xLand = z.xEnd + 0.2;
+  for (let s = 0; s < z.steps; s++) {
+    const t = (s + 0.5) / z.steps;
+    pts.push({ x: z.xStart + (z.xEnd - z.xStart) * t, z: z.z1, y: rise * (s + 1) });
+  }
+  pts.push({ x: xLand, z: z.z1, y: rise * z.steps });
+  pts.push({ x: xLand, z: z.z2, y: rise * z.steps });
+  for (let s = 0; s < z.steps; s++) {
+    const t = (s + 0.5) / z.steps;
+    pts.push({ x: z.xEnd + (z.xStart - z.xEnd) * t, z: z.z2, y: rise * (z.steps + s + 1) });
+  }
+  return pts;
+}
+function spiralRoute() {
+  const s = SPIRAL, M = s.steps * 2, pts = [];
+  for (let i = 0; i <= M; i++) {
+    const a = s.a0 + s.turns * 2 * Math.PI * (i / M);
+    pts.push({ x: s.cx + s.rRoute * Math.cos(a), z: s.cz + s.rRoute * Math.sin(a), y: spacing * (i / M) });
+  }
+  return pts;
+}
+function stairRoutePts(key, lowerFloor, goingUp) {
+  const local = key.includes('ST_BACK') ? zigzagRoute() : spiralRoute();
+  if (!goingUp) local.reverse();
+  return local.map(p => ({ x: p.x, z: p.z, floor: lowerFloor, y: (lowerFloor - 1) * spacing + NAV_Y + p.y }));
+}
 
 // Build Floors
 for (let i = 1; i <= 4; i++) {
@@ -471,19 +546,10 @@ for (let i = 1; i <= 4; i++) {
   // Corridor path
   buildFloorPath().forEach(seg => floorGroup.add(seg));
 
-  // Staircase sits on the right side of the back corridor
+  // Right = zigzag, left wing = spiral
   if (i < 4) {
-    const backStair = makeStaircase(5, 0.6);
-    backStair.position.set(6.2, 1, BACK_SLOT_Z);
-    backStair.rotation.y = Math.PI / 2;
-    floorGroup.add(backStair);
-  }
-
-  // Second staircase, in the notch between Faculty Room A and B
-  if (i < 4) {
-    const wingStair = makeStaircase(5, 0.6);
-    wingStair.position.set(-wingPathX, 1, LEFT_WING_GAP_Z);
-    floorGroup.add(wingStair);
+    floorGroup.add(makeZigzagStair());
+    floorGroup.add(makeSpiralStair());
   }
 
   // Rooms loop for current floor
@@ -867,7 +933,8 @@ if (dashboardCloseBtn) {
      wing runs). Rooms plug into it at their door, and the two staircases
      link each floor to the next.
    - Dijkstra finds the shortest path, then a glowing guide line with
-     moving dots is drawn along it (and up/down the stairs).
+     moving dots is drawn along it (and up/down the stairs, following the
+     zigzag or spiral shape).
    - UI: "Directions" button (From / To), "Directions to here" button in
      the room details sheet, and a step-by-step list.
 ------------------------------------------------------------------- */
@@ -942,8 +1009,8 @@ const navAdj = {};
     segR.push(addNode(`${f}:END_R`,  wingPathX, B.frontEdge, f));
 
     // Staircase landings (match the stairs drawn in the floor loop)
-    segB.push(addNode(`${f}:ST_BACK`, 6.2, backPathZ, f));
-    segL.push(addNode(`${f}:ST_LEFT`, -wingPathX, LEFT_WING_GAP_Z, f));
+    segB.push(addNode(`${f}:ST_BACK`, ZIGZAG.xStart, backPathZ, f));
+    segL.push(addNode(`${f}:ST_LEFT`, SPIRAL.cx, SPIRAL_ENTRY_Z, f));
 
     poiData3D.filter(p => p.layer === f).forEach(p => {
       const a = roomAccess(p);
@@ -1003,8 +1070,9 @@ const routeState = {
   destCone: null, destBaseY: 0, toName: ''
 };
 
+// Points may carry their own height (y) — used for the stair shapes.
 function routeToWorld(p) {
-  return new THREE.Vector3(p.x, (p.floor - 1) * spacing + NAV_Y, p.z);
+  return new THREE.Vector3(p.x, p.y !== undefined ? p.y : (p.floor - 1) * spacing + NAV_Y, p.z);
 }
 
 function addRouteMesh(mesh, layers) {
@@ -1118,7 +1186,7 @@ function updateRoute(nowSec) {
 
 /* ---- Directions text ---- */
 const fmtM = (d) => `${Math.max(1, Math.round(d))} m`;
-const stairLabel = (key) => key.includes('ST_BACK') ? 'back-corridor staircase' : 'left-wing staircase';
+const stairLabel = (key) => key.includes('ST_BACK') ? 'zigzag staircase (back corridor)' : 'spiral staircase (left wing)';
 
 function buildSteps(keys, fromRoom, toRoom, startLeg, endLeg) {
   const steps = [`Start at ${fromRoom.name} (Floor ${fromRoom.layer}) and head out into the corridor.`];
@@ -1366,15 +1434,27 @@ function requestRoute() {
   const startLeg = Math.hypot(startDoor.x - first.x, startDoor.z - first.z);
   const endLeg = Math.hypot(endDoor.x - last.x, endDoor.z - last.z);
 
-  // Polyline for the guide line
+  // Polyline for the guide line. `y` is optional: stair points carry their own height.
   const pts = [];
-  const push = (x, z, floor) => {
+  const push = (x, z, floor, y) => {
     const p = pts[pts.length - 1];
     if (p && p.floor === floor && Math.hypot(p.x - x, p.z - z) < 0.01) return;
-    pts.push({ x, z, floor });
+    pts.push({ x, z, floor, y });
   };
   push(startDoor.x, startDoor.z, from.layer);
-  keys.forEach(k => push(navNodes[k].x, navNodes[k].z, navNodes[k].floor));
+  keys.forEach((k, idx) => {
+    const n = navNodes[k];
+    if (idx > 0) {
+      const prevKey = keys[idx - 1], pn = navNodes[prevKey];
+      if (pn.floor !== n.floor) {
+        // Insert the zigzag / spiral shape between the two landings
+        const goingUp = n.floor > pn.floor;
+        stairRoutePts(prevKey, Math.min(pn.floor, n.floor), goingUp)
+          .forEach(p => push(p.x, p.z, p.floor, p.y));
+      }
+    }
+    push(n.x, n.z, n.floor);
+  });
   push(endDoor.x, endDoor.z, to.layer);
 
   // Total walking distance (flat parts only)
