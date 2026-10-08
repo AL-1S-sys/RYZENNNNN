@@ -1266,7 +1266,11 @@ function findPath(start, end) {
   return path;
 }
 
-/* ---- Guide line (3D) ---- */
+/* ---- Guide line (3D) ----
+   SMOOTH VERSION: instead of straight cylinders with sharp corners, the route
+   points are first passed through smoothRoute() (rounds every corner with a
+   little curve), then drawn as a continuous tube. The line also "draws itself"
+   from the start to the destination, and the moving dots ease in/out. */
 const routeGroup = new THREE.Group();   // holds every route mesh so it can be cleared easily
 scene.add(routeGroup);
 
@@ -1277,20 +1281,25 @@ const routeDotMat   = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent
 const routeStartMat = new THREE.MeshBasicMaterial({ color: 0x1a73e8, transparent: true, opacity: 1,    depthTest: false });
 const routeDestMat  = new THREE.MeshBasicMaterial({ color: 0x2e7d32, transparent: true, opacity: 1,    depthTest: false });
 // Shared geometries (created once, reused for every route)
-const jointGeo      = new THREE.SphereGeometry(NAV_TUBE_R, 10, 10);   // round joint between line segments
+const jointGeo      = new THREE.SphereGeometry(NAV_TUBE_R, 10, 10);   // round joint / drawing head
 const dotGeo        = new THREE.SphereGeometry(0.2, 12, 12);          // moving white dots
 const markerGeo     = new THREE.SphereGeometry(0.42, 16, 16);         // start/end balls
 const destConeGeo   = new THREE.ConeGeometry(0.5, 1.2, 8);            // green arrow over the destination
 
+const NAV_CORNER_R   = 0.8;   // how round the turns are (bigger = softer, 0 = sharp corners)
+const NAV_TUBE_SIDES = 8;     // sides of the tube (more = rounder, heavier)
+
 // Everything about the current route, in one object
 const routeState = {
   active: false,
-  items: [],        // line meshes + the floors they belong to (for hiding)
+  items: [],        // { mesh, layers, at, tube } line pieces (layers = floors they belong to, at = distance where they appear)
   dots: [],         // moving dots
-  world: [],        // route points as 3D vectors
-  pts: [],          // route points as plain data
+  head: null,       // little ball at the tip of the line while it draws itself
+  world: [],        // smoothed route points as 3D vectors
+  layers: [],       // layers[i] = floors that the segment (i-1 -> i) belongs to
   cum: [],          // cumulative distance along the route at each point
   total: 0,         // total route length
+  revealStart: 0, revealDur: 1,
   destCone: null, destBaseY: 0, toName: ''
 };
 
@@ -1300,25 +1309,87 @@ function routeToWorld(p) {
   return new THREE.Vector3(p.x, p.y !== undefined ? p.y : (p.floor - 1) * spacing + NAV_Y, p.z);
 }
 
-// Add a mesh to the route and remember which floors it belongs to,
-// so it can be hidden when those floors are hidden.
-function addRouteMesh(mesh, layers) {
+// Rounds every corner of the route. At each turn we cut the corner a little
+// and replace it with a curve (quadratic Bezier). Straight parts and the dense
+// stair points are left basically untouched.
+// Returns { world: Vector3[], layers: string/number[][] }.
+function smoothRoute(pts) {
+  const W = pts.map(routeToWorld);
+  const n = W.length;
+  const segLayers = (j) => [...new Set([pts[j - 1].floor, pts[j].floor])];   // floors of segment (j-1 -> j)
+  if (n < 2) return { world: W, layers: [[pts[0].floor]] };
+
+  const world = [W[0].clone()];
+  const layers = [segLayers(1)];
+  const add = (v, l) => { world.push(v); layers.push(l); };
+
+  for (let i = 1; i < n; i++) {
+    if (i === n - 1) { add(W[i].clone(), segLayers(i)); break; }          // last point stays as-is
+
+    const a = W[i - 1], b = W[i], c = W[i + 1];
+    const d1 = new THREE.Vector3().subVectors(b, a);
+    const d2 = new THREE.Vector3().subVectors(c, b);
+    const l1 = d1.length(), l2 = d2.length();
+    if (l1 < 1e-4 || l2 < 1e-4) { add(b.clone(), segLayers(i)); continue; }
+    d1.divideScalar(l1); d2.divideScalar(l2);
+
+    const cosT = d1.dot(d2);                                    // 1 = straight on, 0 = 90° turn
+    const r = Math.min(NAV_CORNER_R, l1 * 0.5, l2 * 0.5);       // never eat more than half of a segment
+    if (cosT > 0.9995 || r < 1e-3) { add(b.clone(), segLayers(i)); continue; }
+
+    const p0 = b.clone().addScaledVector(d1, -r);               // where the curve starts
+    const p2 = b.clone().addScaledVector(d2,  r);               // where the curve ends
+    const turn = Math.acos(Math.max(-1, Math.min(1, cosT)));
+    const steps = Math.max(2, Math.ceil(turn / (Math.PI / 10)));   // sharper turn = more points
+    const both = [...new Set([...segLayers(i), ...segLayers(i + 1)])];
+
+    add(p0, segLayers(i));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps, u = 1 - t;
+      add(new THREE.Vector3(
+        u * u * p0.x + 2 * u * t * b.x + t * t * p2.x,
+        u * u * p0.y + 2 * u * t * b.y + t * t * p2.y,
+        u * u * p0.z + 2 * u * t * b.z + t * t * p2.z
+      ), both);
+    }
+  }
+  return { world, layers };
+}
+
+// Add a mesh to the route and remember which floors it belongs to (so it can
+// be hidden with those floors) and at what distance it should appear while
+// the line is drawing itself.
+function addRouteMesh(mesh, layers, at = 0, tube = null) {
   mesh.renderOrder = 999;
   routeGroup.add(mesh);
-  routeState.items.push({ mesh, layers });
+  routeState.items.push({ mesh, layers, at, tube });
   return mesh;
 }
 
-// A thin cylinder stretched between point a and point b
-function makeSegmentMesh(a, b) {
-  const dir = new THREE.Vector3().subVectors(b, a);
-  const len = dir.length();
-  if (len < 0.01) return null;      // too short to bother
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(NAV_TUBE_R, NAV_TUBE_R, len, 8), routeLineMat);
-  mesh.position.copy(a).add(b).multiplyScalar(0.5);                                 // place at the midpoint
-  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());  // rotate from "up" to point along a->b
-  mesh.userData.ownGeo = true;      // this geometry is unique, so free it when clearing
-  return mesh;
+// One smooth tube following a run of points (a "run" = consecutive points on the same floor(s))
+function addTube(points, lyr, d0, d1) {
+  const clean = [];
+  points.forEach(p => {
+    if (!clean.length || clean[clean.length - 1].distanceToSquared(p) > 1e-6) clean.push(p.clone());
+  });
+  if (clean.length < 2) return;
+  const curve = new THREE.CatmullRomCurve3(clean, false, 'centripetal');
+  const segs = Math.max(4, Math.ceil(curve.getLength() / 0.1));
+  const geo = new THREE.TubeGeometry(curve, segs, NAV_TUBE_R, NAV_TUBE_SIDES, false);
+  const mesh = new THREE.Mesh(geo, routeLineMat);
+  mesh.userData.ownGeo = true;      // unique geometry -> free it when clearing
+  addRouteMesh(mesh, lyr, d0, { d0, d1, segs, perSeg: geo.index.count / segs });
+}
+
+// Position on the route at distance `s`. Writes into `target`, returns the segment index.
+function routePointAt(s, target) {
+  const { cum, world } = routeState;
+  let i = 1;
+  while (i < cum.length - 1 && s > cum[i]) i++;
+  const segLen = (cum[i] - cum[i - 1]) || 1;
+  const t = Math.min(1, Math.max(0, (s - cum[i - 1]) / segLen));
+  target.lerpVectors(world[i - 1], world[i], t);
+  return i;
 }
 
 // Remove the current route and reset its state
@@ -1328,10 +1399,12 @@ function clearRoute() {
     routeGroup.remove(mesh);
   });
   routeState.dots.forEach(d => routeGroup.remove(d.mesh));
+  if (routeState.head) routeGroup.remove(routeState.head);
   routeState.items = [];
   routeState.dots = [];
+  routeState.head = null;
   routeState.world = [];
-  routeState.pts = [];
+  routeState.layers = [];
   routeState.cum = [];
   routeState.total = 0;
   routeState.destCone = null;
@@ -1343,41 +1416,58 @@ function clearRoute() {
 function drawRoute(pts, toRoom) {
   clearRoute();
 
-  const world = pts.map(routeToWorld);
-  routeState.pts = pts;
-  routeState.world = world;
+  const { world, layers } = smoothRoute(pts);
+  if (world.length < 2) return;
 
-  // Joint sphere at every point + a cylinder between consecutive points.
-  // `cum` records the running distance so dots can be placed along the line later.
+  // Running distance along the smoothed line (dots + draw-in animation use this)
   const cum = [0];
-  for (let i = 0; i < pts.length; i++) {
-    const joint = addRouteMesh(new THREE.Mesh(jointGeo, routeLineMat), [pts[i].floor]);
-    joint.position.copy(world[i]);
-    if (i > 0) {
-      const seg = makeSegmentMesh(world[i - 1], world[i]);
-      if (seg) addRouteMesh(seg, [pts[i - 1].floor, pts[i].floor]);
-      cum.push(cum[i - 1] + world[i - 1].distanceTo(world[i]));
-    }
-  }
+  for (let i = 1; i < world.length; i++) cum.push(cum[i - 1] + world[i - 1].distanceTo(world[i]));
+  const total = cum[cum.length - 1];
+  routeState.world = world;
+  routeState.layers = layers;
   routeState.cum = cum;
-  routeState.total = cum[cum.length - 1];
+  routeState.total = total;
+  routeState.revealDur = Math.min(1.6, Math.max(0.6, total / 14));   // longer routes take a bit longer to draw
+  routeState.revealStart = performance.now() / 1000;
 
-  // Start (blue) and destination (green) markers
-  const startM = addRouteMesh(new THREE.Mesh(markerGeo, routeStartMat), [pts[0].floor]);
+  // Split the line into runs that share the same floors, one smooth tube per run
+  const keyOf = (l) => l.slice().sort().join(',');
+  let start = 0;
+  for (let i = 2; i <= world.length; i++) {
+    const breaks = i === world.length || keyOf(layers[i]) !== keyOf(layers[start + 1]);
+    if (!breaks) continue;
+    const end = i - 1;
+    addTube(world.slice(start, end + 1), layers[start + 1], cum[start], cum[end]);
+    if (i < world.length) {   // small round joint where two runs meet
+      const joint = addRouteMesh(new THREE.Mesh(jointGeo, routeLineMat),
+        [...new Set([...layers[start + 1], ...layers[i]])], cum[end]);
+      joint.position.copy(world[end]);
+    }
+    start = end;
+  }
+
+  // Start (blue) and destination (green) markers. The destination appears when the line arrives.
+  const startM = addRouteMesh(new THREE.Mesh(markerGeo, routeStartMat), [pts[0].floor], 0);
   startM.position.copy(world[0]);
-  const endM = addRouteMesh(new THREE.Mesh(markerGeo, routeDestMat), [pts[pts.length - 1].floor]);
+  const endM = addRouteMesh(new THREE.Mesh(markerGeo, routeDestMat), [pts[pts.length - 1].floor], total);
   endM.position.copy(world[world.length - 1]);
 
   // Green arrow floating over the destination room
   const coneBaseY = (toRoom.layer - 1) * spacing + 2.9;
-  const cone = addRouteMesh(new THREE.Mesh(destConeGeo, routeDestMat), [toRoom.layer]);
+  const cone = addRouteMesh(new THREE.Mesh(destConeGeo, routeDestMat), [toRoom.layer], total);
   cone.rotation.x = Math.PI;
   cone.position.set(toRoom.x, coneBaseY, toRoom.z);
   routeState.destCone = cone;
   routeState.destBaseY = coneBaseY;
 
+  // Round tip that travels at the front of the line while it draws itself
+  const head = new THREE.Mesh(jointGeo, routeLineMat);
+  head.renderOrder = 999;
+  routeGroup.add(head);
+  routeState.head = head;
+
   // Moving dots that flow from start to destination (one every DOT_SPACING units)
-  const dotCount = Math.max(1, Math.ceil(routeState.total / DOT_SPACING));
+  const dotCount = Math.max(1, Math.ceil(total / DOT_SPACING));
   for (let k = 0; k < dotCount; k++) {
     const dot = new THREE.Mesh(dotGeo, routeDotMat);
     dot.renderOrder = 1000;
@@ -1390,27 +1480,44 @@ function drawRoute(pts, toRoom) {
   updateNavPill();
 }
 
-// Runs every frame: hides route parts on hidden floors and moves the dots
+// Runs every frame: draws the line in, hides route parts on hidden floors, moves the dots
 function updateRoute(nowSec) {
   if (!routeState.active) return;
+  const { layers, total, revealStart, revealDur } = routeState;
+  const floorVisible = (ls) => ls.some(l => floorMeshes[l] && floorMeshes[l].visible);
 
-  // Show a route piece only if at least one of its floors is visible
-  routeState.items.forEach(({ mesh, layers }) => {
-    mesh.visible = layers.some(l => floorMeshes[l] && floorMeshes[l].visible);
+  // Draw-in progress: 0..1 over revealDur seconds, with an ease-out (fast start, soft landing)
+  const t = Math.min(1, Math.max(0, (nowSec - revealStart) / revealDur));
+  const reveal = total * (1 - Math.pow(1 - t, 3));
+
+  routeState.items.forEach(({ mesh, layers: ls, at, tube }) => {
+    const on = floorVisible(ls);
+    if (tube) {
+      const frac = Math.min(1, Math.max(0, (reveal - tube.d0) / ((tube.d1 - tube.d0) || 1)));
+      mesh.geometry.setDrawRange(0, Math.floor(frac * tube.segs) * tube.perSeg);   // show only the drawn part
+      mesh.visible = on && frac > 0;
+    } else {
+      mesh.visible = on && reveal >= at;
+    }
   });
 
-  const { pts, cum, world, total } = routeState;
+  // Tip of the line (only while drawing)
+  if (routeState.head) {
+    if (t >= 1) routeState.head.visible = false;
+    else routeState.head.visible = floorVisible(layers[routePointAt(reveal, routeState.head.position)]);
+  }
+
+  // Moving dots: slide forward, and shrink in/out near the ends instead of popping
+  const FADE = 0.6;
   const flow = (nowSec * ROUTE_SPEED) % DOT_SPACING;   // shared offset that makes all dots slide forward
   routeState.dots.forEach((d, k) => {
     const s = flow + k * DOT_SPACING;                  // this dot's distance along the route
-    if (s > total) { d.mesh.visible = false; return; } // past the end
-    // Find which segment the dot is on...
-    let i = 1;
-    while (i < cum.length - 1 && s > cum[i]) i++;
-    const segLen = (cum[i] - cum[i - 1]) || 1;
-    const t = Math.min(1, Math.max(0, (s - cum[i - 1]) / segLen));   // ...and how far (0..1) along it
-    d.mesh.position.lerpVectors(world[i - 1], world[i], t);
-    d.mesh.visible = [pts[i - 1].floor, pts[i].floor].some(l => floorMeshes[l] && floorMeshes[l].visible);
+    if (s > total || s > reveal) { d.mesh.visible = false; return; }
+    const i = routePointAt(s, d.mesh.position);
+    const e = Math.min(1, s / FADE, (total - s) / FADE);
+    const k2 = e * e * (3 - 2 * e);                    // smoothstep
+    d.mesh.scale.setScalar(Math.max(0.001, k2));
+    d.mesh.visible = k2 > 0.02 && floorVisible(layers[i]);
   });
 
   // Destination arrow bobs up/down and spins
